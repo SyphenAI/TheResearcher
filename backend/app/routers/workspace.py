@@ -40,32 +40,36 @@ from app.services.diagrams import (
     stride_mermaid,
 )
 from app.services.evidence import analyze_evidence, format_citation, publish_gate
+from app.services.app_settings import load_app_settings
 from app.services.frameworks_data import (
     MITRE_TECHNIQUES,
-    PROJECT_TEMPLATES,
     SAAS_CONTROL_PACKS,
     STRIDE,
 )
 from app.services.llm import list_active_providers
 from app.services.refs_cache import load_refs
 from app.services.ai_style import score_ai_likelihood
+from app.services.template_store import list_templates
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 
 
 @router.get("/templates")
 def templates(_: User = Depends(get_current_user)) -> dict:
+    rules = load_app_settings()
+    rows = list_templates()
     return {
         "templates": [
             {
-                "key": key,
-                "title": val["title"],
-                "description": val.get("description", ""),
-                "sections": val.get("sections", []),
+                "key": t["key"],
+                "title": t["title"],
+                "description": t.get("description", ""),
+                "sections": t.get("sections", []),
+                "builtin": bool(t.get("builtin", False)),
             }
-            for key, val in PROJECT_TEMPLATES.items()
+            for t in rows
         ],
-        "default": "blank",
+        "default": rules.get("default_template_key") or "blank",
     }
 
 

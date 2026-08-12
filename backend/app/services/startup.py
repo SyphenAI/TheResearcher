@@ -86,14 +86,19 @@ def ensure_seed_data(db: Session) -> None:
 
     project_count = db.query(Project).count()
     if project_count == 0 and admin:
-        from app.services.frameworks_data import PROJECT_TEMPLATES
         from app.services.refs_cache import refs_path
+        from app.services.template_store import get_template, list_templates
 
         refs_path()  # ensure offline refs cache exists
-        template = PROJECT_TEMPLATES["blank"]
+        list_templates()  # seed editable templates file
+        template = get_template("blank") or {
+            "title": "Blank research",
+            "description": "General structured research.",
+            "sections": ["Overview", "Analysis", "Findings", "Recommendations", "References"],
+        }
         project = Project(
             title="Sample research project",
-            description=template["description"],
+            description=template.get("description", ""),
             status="active",
             owner_id=admin.id,
             agent_contribution_pct=0.0,
@@ -106,7 +111,7 @@ def ensure_seed_data(db: Session) -> None:
         )
         db.add(project)
         db.flush()
-        for idx, title in enumerate(template["sections"]):
+        for idx, title in enumerate(template.get("sections") or ["Overview"]):
             db.add(
                 ResearchSection(
                     project_id=project.id,

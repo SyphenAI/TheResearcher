@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../api/auth";
 
@@ -14,24 +14,57 @@ const EMPTY = {
   humanize_before_export_hint: true,
 };
 
+const EMPTY_TEMPLATE = {
+  key: "",
+  title: "",
+  description: "",
+  sectionsText: "Overview\nAnalysis\nFindings\nRecommendations\nReferences",
+};
+
 export default function SettingsPage() {
   const { user } = useAuth();
   const [form, setForm] = useState(EMPTY);
   const [defaults, setDefaults] = useState(EMPTY);
   const [templates, setTemplates] = useState([]);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [templateForm, setTemplateForm] = useState(EMPTY_TEMPLATE);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const selected = useMemo(
+    () => templates.find((t) => t.key === selectedKey) || null,
+    [templates, selectedKey]
+  );
 
   async function load() {
     const [s, d, t] = await Promise.all([
       api("/api/settings"),
       api("/api/settings/defaults"),
-      api("/api/workspace/templates").catch(() => ({ templates: [] })),
+      api("/api/settings/templates").catch(() => api("/api/workspace/templates")),
     ]);
     setForm({ ...EMPTY, ...s });
     setDefaults({ ...EMPTY, ...d });
-    setTemplates(t.templates || []);
+    const rows = t.templates || [];
+    setTemplates(rows);
+    if (!selectedKey && rows.length) {
+      setSelectedKey(rows[0].key);
+      fillTemplateForm(rows[0]);
+    } else if (selectedKey) {
+      const current = rows.find((r) => r.key === selectedKey);
+      if (current) fillTemplateForm(current);
+    }
+  }
+
+  function fillTemplateForm(t) {
+    setTemplateForm({
+      key: t.key || "",
+      title: t.title || "",
+      description: t.description || "",
+      sectionsText: (t.sections || []).join("\n"),
+    });
+    setCreating(false);
   }
 
   useEffect(() => {
@@ -57,7 +90,7 @@ export default function SettingsPage() {
         body: JSON.stringify(form),
       });
       setForm({ ...EMPTY, ...saved });
-      setMessage("Global rules saved. New projects and publish checks will use these values.");
+      setMessage("Global rules saved.");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -79,6 +112,116 @@ export default function SettingsPage() {
     }
   }
 
+  function startCreate() {
+    setCreating(true);
+    setSelectedKey("");
+    setTemplateForm({ ...EMPTY_TEMPLATE });
+    setMessage("");
+    setError("");
+  }
+
+  function parseSections(text) {
+    return text
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  async function saveTemplate(e) {
+    e.preventDefault();
+    if (user?.role !== "admin") return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    const sections = parseSections(templateForm.sectionsText);
+    if (!templateForm.title.trim()) {
+      setError("Template title is required.");
+      setBusy(false);
+      return;
+    }
+    if (!sections.length) {
+      setError("Add at least one section (one per line).");
+      setBusy(false);
+      return;
+    }
+    try {
+      if (creating || !templateForm.key) {
+        const created = await api("/api/settings/templates", {
+          method: "POST",
+          body: JSON.stringify({
+            title: templateForm.title.trim(),
+            description: templateForm.description.trim(),
+            sections,
+          }),
+        });
+        setMessage(`Created template "${created.title}". It is available in Start research.`);
+        await load();
+        setSelectedKey(created.key);
+        fillTemplateForm(created);
+      } else {
+        const updated = await api(`/api/settings/templates/${encodeURIComponent(templateForm.key)}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            title: templateForm.title.trim(),
+            description: templateForm.description.trim(),
+            sections,
+          }),
+        });
+        setMessage(`Updated template "${updated.title}".`);
+        await load();
+        setSelectedKey(updated.key);
+        fillTemplateForm(updated);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelected() {
+    if (!templateForm.key) return;
+    if (templateForm.key === "blank") {
+      setError("The blank template cannot be deleted.");
+      return;
+    }
+    if (!window.confirm(`Delete template "${templateForm.title}"?`)) return;
+    setBusy(true);
+    try {
+      await api(`/api/settings/templates/${encodeURIComponent(templateForm.key)}`, {
+        method: "DELETE",
+      });
+      setMessage("Template deleted.");
+      setSelectedKey("");
+      setTemplateForm({ ...EMPTY_TEMPLATE });
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetTemplates() {
+    if (!window.confirm("Reset all templates to built-in topic packs? Custom templates will be removed.")) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api("/api/settings/templates/reset", { method: "POST" });
+      setTemplates(res.templates || []);
+      if (res.templates?.length) {
+        setSelectedKey(res.templates[0].key);
+        fillTemplateForm(res.templates[0]);
+      }
+      setMessage("Templates reset to built-in packs.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const readOnly = user?.role !== "admin";
 
   return (
@@ -86,15 +229,14 @@ export default function SettingsPage() {
       <div>
         <h1>Settings</h1>
         <p className="muted">
-          Global rules for publish quality, agent contribution targets, and defaults.
-          Make them stricter for panel polish or looser while drafting.
+          Global rules and research templates. Templates seed the Start research dropdown and description box.
         </p>
       </div>
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
       {readOnly && (
-        <div className="alert warn">You can view settings. Admin can edit global rules.</div>
+        <div className="alert warn">You can view settings. Admin can edit rules and templates.</div>
       )}
 
       <form className="panel stack" onSubmit={save}>
@@ -112,9 +254,6 @@ export default function SettingsPage() {
             onChange={(e) => setField("max_agent_pct", Number(e.target.value))}
           />
         </label>
-        <p className="muted" style={{ margin: 0 }}>
-          Default is 10%. Raise this (for example 25 or 40) while drafting if the gate feels too tight.
-        </p>
 
         <label>
           Max AI checker likelihood %
@@ -180,10 +319,7 @@ export default function SettingsPage() {
             disabled={readOnly}
             onChange={(e) => setField("default_template_key", e.target.value)}
           >
-            {(templates.length
-              ? templates
-              : [{ key: "blank", title: "Blank research" }]
-            ).map((t) => (
+            {(templates.length ? templates : [{ key: "blank", title: "Blank research" }]).map((t) => (
               <option key={t.key} value={t.key}>
                 {t.title}
               </option>
@@ -217,17 +353,137 @@ export default function SettingsPage() {
               Save settings
             </button>
             <button className="btn" type="button" disabled={busy} onClick={resetDefaults}>
-              Reset to defaults
+              Reset rules to defaults
             </button>
           </div>
         )}
 
         <div className="alert warn">
-          Current defaults baked into the product: agent {defaults.max_agent_pct}%, AI checker{" "}
-          {defaults.max_ai_checker_pct}%, evidence {defaults.evidence_coverage_min_pct}%. Your saved
-          values override those for this local install only.
+          Product defaults: agent {defaults.max_agent_pct}%, AI checker {defaults.max_ai_checker_pct}%,
+          evidence {defaults.evidence_coverage_min_pct}%. Saved values apply only on this machine.
         </div>
       </form>
+
+      <div className="panel stack">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Research templates</h2>
+            <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+              These power the Start research dropdown and description box. Edit existing packs or create a
+              new template for a weekly topic.
+            </p>
+          </div>
+          {!readOnly && (
+            <div className="row">
+              <button className="btn primary" type="button" disabled={busy} onClick={startCreate}>
+                New template
+              </button>
+              <button className="btn" type="button" disabled={busy} onClick={resetTemplates}>
+                Reset templates
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid-2">
+          <div className="stack">
+            <h3 style={{ margin: 0 }}>Existing templates</h3>
+            <div className="section-list" style={{ maxHeight: 360 }}>
+              {templates.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`section-item ${!creating && selectedKey === t.key ? "active" : ""}`}
+                  onClick={() => {
+                    setSelectedKey(t.key);
+                    fillTemplateForm(t);
+                  }}
+                >
+                  <div>{t.title}</div>
+                  <div className="muted" style={{ fontSize: "0.8rem" }}>
+                    {t.key}
+                    {t.builtin ? " · built-in" : " · custom"} · {(t.sections || []).length} sections
+                  </div>
+                </button>
+              ))}
+              {!templates.length && <p className="muted">No templates yet.</p>}
+            </div>
+          </div>
+
+          <form className="stack" onSubmit={saveTemplate}>
+            <h3 style={{ margin: 0 }}>{creating ? "Create template" : "Edit template"}</h3>
+            {!creating && templateForm.key && (
+              <div className="badge">key: {templateForm.key}</div>
+            )}
+            <label>
+              Title
+              <input
+                value={templateForm.title}
+                disabled={readOnly}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="e.g. Weekly exposure brief"
+                required
+              />
+            </label>
+            <label>
+              Description (shown in Start research box)
+              <textarea
+                value={templateForm.description}
+                disabled={readOnly}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Short blurb that helps you pick the right pack this week"
+                style={{ minHeight: 90 }}
+              />
+            </label>
+            <label>
+              Sections (one per line)
+              <textarea
+                value={templateForm.sectionsText}
+                disabled={readOnly}
+                onChange={(e) => setTemplateForm((f) => ({ ...f, sectionsText: e.target.value }))}
+                placeholder={"Overview\nAnalysis\nFindings\nRecommendations\nReferences"}
+                style={{ minHeight: 180 }}
+              />
+            </label>
+            {selected && !creating && (
+              <div className="alert ok" style={{ margin: 0 }}>
+                Preview: {selected.description || "No description yet."}
+                <div className="muted" style={{ marginTop: "0.35rem" }}>
+                  {(selected.sections || []).length} sections
+                </div>
+              </div>
+            )}
+            {!readOnly && (
+              <div className="row">
+                <button className="btn primary" type="submit" disabled={busy}>
+                  {creating ? "Create template" : "Save template"}
+                </button>
+                {creating && (
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setCreating(false);
+                      if (templates[0]) {
+                        setSelectedKey(templates[0].key);
+                        fillTemplateForm(templates[0]);
+                      }
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+                {!creating && templateForm.key && templateForm.key !== "blank" && (
+                  <button className="btn danger" type="button" disabled={busy} onClick={deleteSelected}>
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

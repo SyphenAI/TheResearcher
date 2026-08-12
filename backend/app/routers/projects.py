@@ -152,13 +152,17 @@ def create_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ProjectOut:
-    from app.services.frameworks_data import PROJECT_TEMPLATES
-
     from app.services.app_settings import load_app_settings
+    from app.services.template_store import get_template
 
     rules = load_app_settings()
     key = body.template_key or rules.get("default_template_key") or "blank"
-    template = PROJECT_TEMPLATES.get(key) or PROJECT_TEMPLATES["blank"]
+    template = get_template(key) or get_template("blank") or {
+        "title": "Blank research",
+        "description": "",
+        "sections": ["Overview", "Analysis", "Findings", "Recommendations", "References"],
+        "section_defs": [],
+    }
     section_defs = template.get("section_defs")
     evidence_mode = (
         body.evidence_mode
