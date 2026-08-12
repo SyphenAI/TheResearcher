@@ -52,6 +52,39 @@ export default function AiCheckerPage() {
     setHistory(rows);
   }
 
+  async function deleteHistoryItem(id) {
+    if (!id) return;
+    setError("");
+    try {
+      await api(`/api/research/ai-check/history/${id}`, { method: "DELETE" });
+      setHistory((prev) => prev.filter((h) => h.id !== id));
+      setMessage(`Deleted check #${id}.`);
+    } catch (e) {
+      setError(e.message || "Could not delete check.");
+    }
+  }
+
+  async function clearAllHistory() {
+    if (!history.length) return;
+    const ok = window.confirm(
+      `Clear all ${history.length} recent AI checks? This cannot be undone.`
+    );
+    if (!ok) return;
+    setError("");
+    setBusy(true);
+    setBusyLabel("Clearing history…");
+    try {
+      const res = await api("/api/research/ai-check/history", { method: "DELETE" });
+      setHistory([]);
+      setMessage(`Cleared ${res?.deleted ?? "all"} recent checks.`);
+    } catch (e) {
+      setError(e.message || "Could not clear history.");
+    } finally {
+      setBusy(false);
+      setBusyLabel("");
+    }
+  }
+
   useEffect(() => {
     loadHistory().catch(() => {});
     api("/api/research/extract/formats")
@@ -668,8 +701,22 @@ export default function AiCheckerPage() {
         </div>
       )}
 
-      <div className="panel">
-        <h2>Recent checks</h2>
+      <div className="panel stack">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Recent checks</h2>
+          <button
+            className="btn"
+            type="button"
+            disabled={busy || !history.length}
+            onClick={clearAllHistory}
+            title="Remove all stored AI check history"
+          >
+            Clear all
+          </button>
+        </div>
+        <p className="muted" style={{ margin: 0 }}>
+          History is local. Delete single rows or clear all when the list gets long.
+        </p>
         <table className="table">
           <thead>
             <tr>
@@ -678,6 +725,7 @@ export default function AiCheckerPage() {
               <th>AI %</th>
               <th>Human %</th>
               <th>When</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -688,8 +736,26 @@ export default function AiCheckerPage() {
                 <td>{h.ai_pct}</td>
                 <td>{h.human_pct}</td>
                 <td className="muted">{h.created_at}</td>
+                <td>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => deleteHistoryItem(h.id)}
+                    title={`Delete check #${h.id}`}
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
+            {!history.length && (
+              <tr>
+                <td colSpan={6} className="muted">
+                  No checks yet.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

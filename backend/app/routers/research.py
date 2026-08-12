@@ -320,6 +320,30 @@ def ai_check_history(
     return out
 
 
+@router.delete("/ai-check/history/{check_id}", status_code=204)
+def delete_ai_check(
+    check_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Response:
+    row = db.query(AiCheckResult).filter(AiCheckResult.id == check_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Check not found")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/ai-check/history", status_code=200)
+def clear_ai_check_history(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    count = db.query(AiCheckResult).delete()
+    db.commit()
+    return {"ok": True, "deleted": int(count or 0)}
+
+
 @router.post("/judge", response_model=JudgeOut)
 def judge_output(
     body: JudgeRequest,
