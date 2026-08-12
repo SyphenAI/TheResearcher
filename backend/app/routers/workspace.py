@@ -401,7 +401,10 @@ def backups_list(user: User = Depends(require_admin)) -> dict:
 
 @router.post("/backups")
 def backups_create(user: User = Depends(require_admin)) -> dict:
-    return create_backup()
+    try:
+        return create_backup()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}") from exc
 
 
 @router.post("/backups/restore")
@@ -410,6 +413,8 @@ def backups_restore(filename: str, user: User = Depends(require_admin)) -> dict:
         return restore_backup(filename)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Restore failed: {exc}") from exc
 
 
 @router.get("/backups/download/{filename}")
