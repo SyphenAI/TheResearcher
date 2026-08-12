@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../api/auth";
+import TextDiffPanes from "../components/TextDiffPanes";
 
 export default function ResearchWorkspacePage() {
   const { projectId } = useParams();
@@ -40,6 +41,9 @@ export default function ResearchWorkspacePage() {
   const [controlName, setControlName] = useState("");
   const [vendor, setVendor] = useState("");
   const [rightTab, setRightTab] = useState("paper");
+  /** Pending humanize rewrite: accept/reject before writing to the section */
+  const [humanizeDraft, setHumanizeDraft] = useState(null);
+  const humanizeRef = useRef(null);
 
   const activeSection = useMemo(
     () => sections.find((s) => s.id === sectionId) || null,
@@ -97,6 +101,17 @@ export default function ResearchWorkspacePage() {
   useEffect(() => {
     if (activeSection) setPrompt(activeSection.prompt || "");
   }, [sectionId]);
+
+  // Drop a pending rewrite when the user switches sections
+  useEffect(() => {
+    setHumanizeDraft(null);
+  }, [sectionId]);
+
+  useEffect(() => {
+    if (humanizeDraft && humanizeRef.current) {
+      humanizeRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [humanizeDraft]);
 
   async function saveSectionContent(content_md) {
     if (!project || !activeSection) return;
@@ -172,24 +187,87 @@ export default function ResearchWorkspacePage() {
 
   async function humanizeSection() {
     if (!activeSection) return;
+    const original = activeSection.content_md || "";
+    if (!original.trim()) {
+      setError("Section is empty. Write or apply research content first.");
+      return;
+    }
     setBusy(true);
+    setError("");
+    setMessage("");
     try {
+      const before = await api("/api/research/ai-check", {
+        method: "POST",
+        body: JSON.stringify({
+          text: original,
+          source_label: `section-before:${activeSection.id}`,
+        }),
+      });
       const result = await api("/api/research/rewrite", {
         method: "POST",
-        body: JSON.stringify({ text: activeSection.content_md, strength: "high" }),
+        body: JSON.stringify({ text: original, strength: "high" }),
       });
-      await saveSectionContent(result.content);
+      const proposed = result.content || "";
+      if (!proposed.trim()) {
+        throw new Error("Rewrite returned empty text.");
+      }
+      const after = await api("/api/research/ai-check", {
+        method: "POST",
+        body: JSON.stringify({
+          text: proposed,
+          source_label: `section-after-humanize:${activeSection.id}`,
+        }),
+      });
+      setHumanizeDraft({
+        sectionId: activeSection.id,
+        sectionTitle: activeSection.title,
+        original,
+        proposed,
+        before,
+        after,
+        provider: result.provider || null,
+        used_live: !!result.used_live,
+      });
+      const delta = Number((before.ai_pct - after.ai_pct).toFixed(1));
+      const via = result.used_live
+        ? `via ${result.provider || "live model"}`
+        : "via local rewrite";
       setMessage(
-        result.used_live
-          ? `Humanized with ${result.provider}. Edit further before publish.`
-          : "Humanized locally. Edit further before publish."
+        `Humanize draft ready ${via}. AI likelihood ${before.ai_pct}% → ${after.ai_pct}%` +
+          (delta > 0 ? ` (↓ ${delta} pts).` : delta < 0 ? ` (↑ ${Math.abs(delta)} pts).` : ".") +
+          " Review red/green diff, then Accept or Reject."
       );
+      setRightTab("paper");
+    } catch (e) {
+      setError(e.message || "Humanize failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptHumanize() {
+    if (!humanizeDraft || !activeSection) return;
+    if (humanizeDraft.sectionId !== activeSection.id) {
+      setError("Section changed. Re-run Humanize on this section.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await saveSectionContent(humanizeDraft.proposed);
+      setHumanizeDraft(null);
+      setMessage("Humanized text accepted into the section. Edit further in your own voice before publish.");
       await loadProjectDetails();
     } catch (e) {
       setError(e.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  function rejectHumanize() {
+    setHumanizeDraft(null);
+    setMessage("Humanize draft discarded. Section unchanged.");
   }
 
   async function judgeSection() {
@@ -518,8 +596,13 @@ export default function ResearchWorkspacePage() {
                     <button className="btn" onClick={applyAssistant} disabled={!assistantOut || busy}>
                       Apply to paper
                     </button>
-                    <button className="btn" onClick={humanizeSection} disabled={busy}>
-                      Humanize
+                    <button
+                      className="btn"
+                      onClick={humanizeSection}
+                      disabled={busy || !activeSection}
+                      title="Rewrite then review side-by-side before saving"
+                    >
+                      {busy ? "Working…" : "Humanize"}
                     </button>
                     <button className="btn" onClick={judgeSection} disabled={busy}>
                       Judge
@@ -537,6 +620,76 @@ export default function ResearchWorkspacePage() {
                   <textarea value={assistantOut} onChange={(e) => setAssistantOut(e.target.value)} />
                 </label>
               )}
+
+              {humanizeDraft && !isReviewer && (
+                <div className="panel stack" ref={humanizeRef} style={{ borderColor: "rgba(46, 204, 113, 0.35)" }}>
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <h3 style={{ margin: 0 }}>
+                      Humanize review · {humanizeDraft.sectionTitle || "section"}
+                    </h3>
+                    <div className="row">
+                      <button className="btn" type="button" onClick={rejectHumanize} disabled={busy}>
+                        Reject
+                      </button>
+                      <button className="btn primary" type="button" onClick={acceptHumanize} disabled={busy}>
+                        Accept into section
+                      </button>
+                    </div>
+                  </div>
+                  <p className="muted" style={{ margin: 0 }}>
+                    {humanizeDraft.used_live
+                      ? `Rewrite used live model (${humanizeDraft.provider || "provider"}).`
+                      : "Rewrite used local rules only."}{" "}
+                    Not saved until you Accept. Red = removed, green = added.
+                  </p>
+                  <div className="grid-3">
+                    <div className="metric">
+                      <span className="muted">Before AI %</span>
+                      <strong
+                        className={
+                          humanizeDraft.before.ai_pct >= 10 ? "badge bad" : "badge good"
+                        }
+                      >
+                        {humanizeDraft.before.ai_pct}%
+                      </strong>
+                    </div>
+                    <div className="metric">
+                      <span className="muted">After AI %</span>
+                      <strong
+                        className={
+                          humanizeDraft.after.ai_pct >= 10 ? "badge bad" : "badge good"
+                        }
+                      >
+                        {humanizeDraft.after.ai_pct}%
+                      </strong>
+                    </div>
+                    <div className="metric">
+                      <span className="muted">Delta</span>
+                      <strong style={{ fontSize: "1rem" }}>
+                        {(() => {
+                          const d = Number(
+                            (humanizeDraft.before.ai_pct - humanizeDraft.after.ai_pct).toFixed(1)
+                          );
+                          if (d > 0) return `↓ ${d} pts`;
+                          if (d < 0) return `↑ ${Math.abs(d)} pts`;
+                          return "No change";
+                        })()}
+                      </strong>
+                    </div>
+                  </div>
+                  <TextDiffPanes
+                    original={humanizeDraft.original}
+                    proposed={humanizeDraft.proposed}
+                    originalLabel="Original (in section now)"
+                    proposedLabel="Proposed rewrite"
+                    editableProposed
+                    onProposedChange={(next) =>
+                      setHumanizeDraft((d) => (d ? { ...d, proposed: next } : d))
+                    }
+                  />
+                </div>
+              )}
+
               {critique && (
                 <div className="alert warn">
                   <strong>Critic</strong>

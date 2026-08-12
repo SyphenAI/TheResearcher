@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import TextDiffPanes from "../components/TextDiffPanes";
 
 export default function AiCheckerPage() {
   const [text, setText] = useState("");
@@ -378,38 +379,17 @@ export default function AiCheckerPage() {
             </div>
           </div>
 
-          <div className="grid-2 equal">
-            <div className="stack">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>Original</strong>
-                <span className="muted">{compare.original.length} chars</span>
-              </div>
-              <textarea
-                readOnly
-                value={compare.original}
-                style={{ minHeight: 280, fontFamily: "var(--mono)", fontSize: "0.85rem" }}
-              />
-            </div>
-            <div className="stack">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>Humanized</strong>
-                <span className="muted">{compare.humanized.length} chars</span>
-              </div>
-              <textarea
-                value={compare.humanized}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setCompare((c) => (c ? { ...c, humanized: next } : c));
-                  setText(next);
-                }}
-                style={{ minHeight: 280, fontFamily: "var(--mono)", fontSize: "0.85rem" }}
-                disabled={busy}
-              />
-              <p className="muted" style={{ margin: 0 }}>
-                Edit the humanized side freely. Edits sync into the main editor.
-              </p>
-            </div>
-          </div>
+          <TextDiffPanes
+            original={compare.original}
+            proposed={compare.humanized}
+            originalLabel="Original"
+            proposedLabel="Humanized"
+            editableProposed
+            onProposedChange={(next) => {
+              setCompare((c) => (c ? { ...c, humanized: next } : c));
+              setText(next);
+            }}
+          />
         </div>
       )}
 

@@ -137,6 +137,72 @@ a {
   grid-template-columns: 1fr 1fr;
 }
 
+/* Side-by-side text diff (humanize compare) */
+.diff-pane {
+  min-height: 240px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.diff-eq {
+  color: var(--text, #e8eefc);
+}
+
+.diff-del {
+  background: rgba(255, 72, 72, 0.28);
+  color: #ffd0d0;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  border-radius: 2px;
+}
+
+.diff-add {
+  background: rgba(46, 204, 113, 0.28);
+  color: #d4ffe4;
+  border-radius: 2px;
+}
+
+.diff-legend {
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.diff-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.diff-swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.diff-swatch.del {
+  background: rgba(255, 72, 72, 0.55);
+}
+
+.diff-swatch.add {
+  background: rgba(46, 204, 113, 0.55);
+}
+
+.diff-edit {
+  min-height: 200px;
+}
+
 .grid-3 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
