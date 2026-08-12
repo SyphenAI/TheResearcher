@@ -328,19 +328,23 @@ def judge_output(
 ) -> JudgeOut:
     from app.services.llm import chat, list_active_providers
 
-    # Local baseline always runs. Live models only if enabled for judge.
+    # Local baseline always runs. Live models only if enabled for judge in Security.
     result = local_judge(body.text, body.criteria)
     judge_providers = list_active_providers(db, purpose="judge")
-    live_notes: list[str] = []
-    if judge_providers:
-        provider = judge_providers[0]["provider"]
-        criteria = ", ".join(body.criteria or [])
+    models_used: list[str] = ["local"]
+    live_bits: list[str] = []
+    criteria = ", ".join(body.criteria or [])
+
+    # Use up to 3 judge-enabled providers for multi-perspective review.
+    for item in judge_providers[:3]:
+        provider = item["provider"]
         live = chat(
             db,
             provider=provider,
             system=(
-                "You are a strict research judge for Security Operations writing. "
-                "Score accuracy, relevance, originality, ethics, and clarity. "
+                "You are a strict research judge for Security Operations writing aimed at "
+                "security leaders. Focus on decision quality, evidence, residual risk, and "
+                "whether this reads like analyst insight rather than a pentest ticket. "
                 "Be direct. No em dashes or AI filler."
             ),
             messages=[
@@ -348,26 +352,26 @@ def judge_output(
                     "role": "user",
                     "content": (
                         f"Criteria: {criteria}\n\n"
-                        f"Return short feedback and whether this is publish-ready.\n\n"
-                        f"TEXT:\n{body.text[:10000]}"
+                        f"Give short feedback: strengths, gaps, publish-ready yes/no, and one rewrite priority.\n\n"
+                        f"TEXT:\n{body.text[:9000]}"
                     ),
                 }
             ],
-            max_tokens=900,
+            max_tokens=700,
         )
         if live.content and not live.error:
-            result["feedback"] = (
-                f"{result['feedback']} Live judge ({provider}): {live.content[:1200]}"
-            )
-            live_notes.append(provider)
+            models_used.append(provider)
+            live_bits.append(f"**{provider}:** {live.content[:900]}")
         elif live.error:
-            result["feedback"] = (
-                f"{result['feedback']} Live judge skipped ({provider}): model unavailable."
-            )
+            live_bits.append(f"**{provider}:** unavailable ({live.error[:120]})")
+
+    if live_bits:
+        result["feedback"] = (
+            f"{result['feedback']}\n\n### Live judge panel\n" + "\n\n".join(live_bits)
+        )
     else:
         result["feedback"] = (
-            f"{result['feedback']} No judge-enabled models active in Security. "
-            "Local judge only."
+            f"{result['feedback']} No judge-enabled models active in Security. Local judge only."
         )
 
     row = JudgeResult(
@@ -388,6 +392,8 @@ def judge_output(
         scores=result["scores"],
         feedback=row.feedback,
         created_at=row.created_at,
+        models_used=models_used,
+        used_live=len(models_used) > 1,
     )
 
 

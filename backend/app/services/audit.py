@@ -30,6 +30,8 @@ ACTION_LABELS = {
     "token_judge_off": "Model disabled for judge",
     "token_research_on": "Model enabled for research",
     "token_research_off": "Model disabled for research",
+    "token_test_ok": "Token connectivity test passed",
+    "token_test_fail": "Token connectivity test failed",
     "global_kill": "Global Kill ran",
     "kill_switch": "Global Kill ran",
     "seed_admin": "Default admin account prepared",

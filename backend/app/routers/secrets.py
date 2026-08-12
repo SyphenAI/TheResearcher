@@ -14,10 +14,12 @@ from app.schemas import (
     TokenBulkActionResponse,
     TokenCreate,
     TokenOut,
+    TokenTestResult,
     TokenUpdate,
 )
 from app.security import decrypt_secret, encrypt_secret, mask_secret
 from app.services.audit import MAX_AUDIT_ROWS, log_security_event, serialize_audit_row
+from app.services.llm import test_token_connection
 
 router = APIRouter(prefix="/api/security", tags=["security"])
 
@@ -220,6 +222,38 @@ def set_research_usage(
     db.commit()
     db.refresh(row)
     return _to_out(row)
+
+
+@router.post("/tokens/{token_id}/test", response_model=TokenTestResult)
+def test_token(
+    token_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenTestResult:
+    """Live connectivity check against the provider using a tiny probe request."""
+    row = db.query(ApiToken).filter(ApiToken.id == token_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    result = test_token_connection(db, row)
+    latency = result.get("latency_ms")
+    latency_bit = f" in {latency}ms" if latency is not None else ""
+    if result.get("ok"):
+        log_security_event(
+            db,
+            actor=user.username,
+            action="token_test_ok",
+            detail=f"{row.provider} ({row.label}) connectivity ok{latency_bit}",
+        )
+    else:
+        log_security_event(
+            db,
+            actor=user.username,
+            action="token_test_fail",
+            detail=f"{row.provider} ({row.label}) connectivity failed{latency_bit}",
+        )
+    db.commit()
+    return TokenTestResult(**result)
 
 
 @router.post("/tokens/disable-all", response_model=TokenBulkActionResponse)

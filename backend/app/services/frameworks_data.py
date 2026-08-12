@@ -155,4 +155,22 @@ PROJECT_TEMPLATES = {
             "References",
         ],
     },
+    "tester_to_analyst": {
+        "title": "Tester to Analyst note",
+        "description": (
+            "Bridge hands-on testing experience into research insight writing: decision framing, "
+            "market or program patterns, residual risk, and leadership recommendations."
+        ),
+        "sections": [
+            "Decision the note must unlock",
+            "What testing experience taught me",
+            "Program or market pattern",
+            "Threat framing (MITRE / STRIDE)",
+            "What buyers get wrong",
+            "Options and tradeoffs",
+            "Recommendations (now / next / stop)",
+            "Evidence still needed",
+            "References",
+        ],
+    },
 }

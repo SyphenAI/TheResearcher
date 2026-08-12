@@ -197,6 +197,18 @@ class TokenBulkActionResponse(BaseModel):
     message: str
 
 
+class TokenTestResult(BaseModel):
+    ok: bool
+    provider: str
+    label: str
+    model: str = ""
+    message: str
+    latency_ms: int | None = None
+    active: bool | None = None
+    use_for_research: bool | None = None
+    use_for_judge: bool | None = None
+
+
 class AssistantRequest(BaseModel):
     prompt: str
     section_id: int | None = None
@@ -274,6 +286,8 @@ class JudgeOut(BaseModel):
     scores: dict[str, float]
     feedback: str
     created_at: datetime
+    models_used: list[str] = []
+    used_live: bool = False
 
 
 class RewriteRequest(BaseModel):

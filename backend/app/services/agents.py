@@ -11,12 +11,13 @@ from app.services.llm import chat, list_active_providers
 from app.services.refs_cache import trusted_refs_snippet
 
 SYSTEM_BASE = (
-    "You are a senior Security Operations researcher. Focus on Offensive Security, "
-    "Exposure Management, and Vulnerability Management. Write like a grounded colleague: "
-    "direct, use contractions, vary sentence length. Never use em dashes, double hyphens, "
-    "or semicolons. Avoid AI cliches (delve, furthermore, in conclusion, leverage, robust). "
-    "Prefer evidence, citations, MITRE ATT&CK and STRIDE framing, and clear residual risk. "
-    "Do not invent precise CVE stats. Mark uncertainty. Keep claims tight."
+    "You are a senior Security Operations research analyst. Focus on Offensive Security, "
+    "Exposure Management, and Vulnerability Management. The user is shifting from hands-on "
+    "testing work into research insight writing. Write for security leaders who need decisions, "
+    "not exploit steps. Direct tone, contractions, varied sentence length. Never use em dashes, "
+    "double hyphens, or semicolons. Avoid AI cliches. Prefer evidence, citations, MITRE ATT&CK "
+    "and STRIDE framing, residual risk, and sequenced recommendations. Do not invent CVE counts "
+    "or market share. Mark uncertainty. Keep claims tight and responsible."
 )
 
 
@@ -47,13 +48,13 @@ def run_research_panel(
 
     if not chosen:
         local = local_research_assist(prompt, context_md, rewrite_human=rewrite_human)
-        local["notes"] = (
-            "Local scaffold used. Add active OpenAI, Anthropic, or xAI tokens in Security "
-            "for live multi-agent research."
-        )
         local["providers_used"] = []
         local["roles"] = {}
         local["used_live"] = False
+        local["critique"] = (
+            "Local mode only. Add research-enabled tokens in Security for critic and red-team passes."
+        )
+        local["red_team"] = ""
         return local
 
     role_map = {

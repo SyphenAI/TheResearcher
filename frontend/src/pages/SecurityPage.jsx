@@ -203,6 +203,30 @@ export default function SecurityPage() {
     }
   }
 
+  async function testToken(token) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await api(`/api/security/tokens/${token.id}/test`, { method: "POST" });
+      const latency = res.latency_ms != null ? ` (${res.latency_ms}ms)` : "";
+      if (res.ok) {
+        setMessage(
+          `Test passed for ${res.provider}/${res.label}${latency}. ${res.message || ""}`.trim()
+        );
+      } else {
+        setError(
+          `Test failed for ${res.provider}/${res.label}${latency}. ${res.message || "No details."}`.trim()
+        );
+      }
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function disableAll() {
     if (!window.confirm("Disable all tokens? Values stay stored and can be re-enabled later.")) {
       return;
@@ -409,6 +433,9 @@ export default function SecurityPage() {
                 <td>
                   {user?.role === "admin" && (
                     <div className="row">
+                      <button className="btn ghost" type="button" disabled={busy} onClick={() => testToken(t)}>
+                        Test
+                      </button>
                       <button className="btn ghost" type="button" disabled={busy} onClick={() => startEdit(t)}>
                         Edit
                       </button>

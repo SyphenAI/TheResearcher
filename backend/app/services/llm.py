@@ -128,6 +128,100 @@ def get_provider_token(
     return None
 
 
+def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
+    """Minimal live call to verify a stored token can authenticate and respond."""
+    provider = (token_row.provider or "").strip().lower()
+    meta = PROVIDER_DEFAULTS.get(provider)
+    if not meta:
+        return {
+            "ok": False,
+            "provider": provider,
+            "label": token_row.label,
+            "model": "",
+            "message": f"Unknown provider '{provider}'.",
+            "latency_ms": None,
+        }
+
+    try:
+        api_key = decrypt_secret(token_row.encrypted_value)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "provider": provider,
+            "label": token_row.label,
+            "model": meta.get("default_model", ""),
+            "message": f"Could not decrypt token: {exc}",
+            "latency_ms": None,
+        }
+
+    model = meta["default_model"]
+    style = meta["style"]
+    started = datetime.now(timezone.utc)
+    try:
+        if style == "anthropic":
+            content = _anthropic_chat(
+                api_key,
+                meta,
+                model,
+                [{"role": "user", "content": "Reply with exactly: pong"}],
+                system="You are a connectivity probe. Reply with only the word pong.",
+                max_tokens=16,
+                temperature=0,
+            )
+        elif style == "google":
+            content = _google_chat(
+                api_key,
+                meta,
+                model,
+                [{"role": "user", "content": "Reply with exactly: pong"}],
+                system="You are a connectivity probe. Reply with only the word pong.",
+                max_tokens=16,
+                temperature=0,
+            )
+        else:
+            content = _openai_style_chat(
+                api_key,
+                meta,
+                model,
+                [{"role": "user", "content": "Reply with exactly: pong"}],
+                system="You are a connectivity probe. Reply with only the word pong.",
+                max_tokens=16,
+                temperature=0,
+                provider=provider,
+            )
+        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        token_row.last_used_at = datetime.now(timezone.utc)
+        db.commit()
+        preview = (content or "").strip().replace("\n", " ")[:80]
+        return {
+            "ok": True,
+            "provider": provider,
+            "label": token_row.label,
+            "model": model,
+            "message": f"Connected. Model responded ({preview or 'empty body'}).",
+            "latency_ms": elapsed,
+            "active": bool(token_row.is_active),
+            "use_for_research": bool(getattr(token_row, "use_for_research", True)),
+            "use_for_judge": bool(getattr(token_row, "use_for_judge", True)),
+        }
+    except Exception as exc:  # noqa: BLE001
+        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        err = str(exc)
+        if len(err) > 280:
+            err = err[:279] + "…"
+        return {
+            "ok": False,
+            "provider": provider,
+            "label": token_row.label,
+            "model": model,
+            "message": err,
+            "latency_ms": elapsed,
+            "active": bool(token_row.is_active),
+            "use_for_research": bool(getattr(token_row, "use_for_research", True)),
+            "use_for_judge": bool(getattr(token_row, "use_for_judge", True)),
+        }
+
+
 def chat(
     db: Session,
     *,

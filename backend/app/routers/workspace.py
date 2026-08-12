@@ -141,6 +141,8 @@ def evidence_analyze(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> dict:
+    from app.services.research_scaffold import evidence_checklist_md
+
     analysis = analyze_evidence(body.text)
     ai = score_ai_likelihood(body.text)
     project = None
@@ -152,7 +154,22 @@ def evidence_analyze(
         evidence=analysis,
         ai_pct=ai["ai_pct"],
     )
-    return {"evidence": analysis, "ai_check": ai, "publish_gate": gate}
+    return {
+        "evidence": analysis,
+        "ai_check": ai,
+        "publish_gate": gate,
+        "checklist_md": evidence_checklist_md(),
+    }
+
+
+@router.post("/evidence/checklist")
+def evidence_checklist_endpoint(
+    topic: str = "",
+    _: User = Depends(get_current_user),
+) -> dict:
+    from app.services.research_scaffold import evidence_checklist_md
+
+    return {"markdown": evidence_checklist_md(topic)}
 
 
 @router.get("/projects/{project_id}/publish-gate")
