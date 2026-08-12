@@ -243,9 +243,10 @@ def scholar_search(
 
 @router.get("/feed")
 def research_topic_feed(
+    days: int = 7,
     _: User = Depends(get_current_user),
 ) -> dict:
-    """Dashboard feed: news + papers for follow topics from Settings."""
+    """Live dashboard feed: news + papers for follow topics (default last 7 days)."""
     from app.services.app_settings import load_app_settings
     from app.services.research_feed import build_topic_feed
 
@@ -253,6 +254,7 @@ def research_topic_feed(
     topics = rules.get("follow_topics") or []
     return build_topic_feed(
         topics if isinstance(topics, list) else [],
+        days=max(1, min(int(days or 7), 30)),
         semantic_scholar_key=(rules.get("semantic_scholar_api_key") or "").strip() or None,
         openalex_key=(rules.get("openalex_api_key") or "").strip() or None,
     )

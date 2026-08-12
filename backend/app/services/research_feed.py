@@ -22,28 +22,65 @@ def _clean(text: str) -> str:
     return text
 
 
-def _parse_rss_date(value: str) -> str | None:
+def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
+    raw = str(value).strip()
+    # ISO-ish
     try:
-        dt = parsedate_to_datetime(value)
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).isoformat()
+        return dt.astimezone(timezone.utc)
     except Exception:  # noqa: BLE001
-        return value
+        pass
+    # RFC 2822 from RSS
+    try:
+        dt = parsedate_to_datetime(str(value))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:  # noqa: BLE001
+        pass
+    # Year-only (papers)
+    if re.fullmatch(r"\d{4}", str(value).strip()):
+        try:
+            y = int(value)
+            return datetime(y, 12, 31, tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
 
 
-def fetch_google_news(topic: str, *, limit: int = 6) -> list[dict[str, Any]]:
+def _iso(dt: datetime | None) -> str:
+    if not dt:
+        return ""
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def fetch_google_news(
+    topic: str,
+    *,
+    limit: int = 8,
+    days: int = 7,
+) -> list[dict[str, Any]]:
+    """Live pull from Google News RSS. Uses when:7d to bias toward recent items."""
     q = (topic or "").strip()
     if len(q) < 2:
         return []
+    days = max(1, min(int(days or 7), 30))
+    # Google News query operator keeps the feed focused on the last N days.
+    q_rss = f"{q} when:{days}d"
     url = (
         "https://news.google.com/rss/search"
-        f"?q={quote(q)}&hl=en-US&gl=US&ceid=US:en"
+        f"?q={quote(q_rss)}&hl=en-US&gl=US&ceid=US:en"
     )
     try:
-        with httpx.Client(timeout=20.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
+        with httpx.Client(
+            timeout=20.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True
+        ) as client:
             resp = client.get(url)
             if resp.status_code >= 400:
                 return []
@@ -51,14 +88,20 @@ def fetch_google_news(topic: str, *, limit: int = 6) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001
         return []
 
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     items: list[dict[str, Any]] = []
     for item in root.findall(".//item"):
         title = _clean(item.findtext("title") or "")
         link = (item.findtext("link") or "").strip()
-        pub = _parse_rss_date(item.findtext("pubDate") or "")
+        pub_raw = item.findtext("pubDate") or ""
+        pub_dt = _parse_dt(pub_raw)
         source = _clean(item.findtext("source") or "")
         desc = _clean(item.findtext("description") or "")
         if not title:
+            continue
+        # Hard filter: only keep items with a parseable date inside the window.
+        # If Google omits a date, still allow a small number (rare) as "undated recent".
+        if pub_dt and pub_dt < cutoff:
             continue
         items.append(
             {
@@ -67,12 +110,13 @@ def fetch_google_news(topic: str, *, limit: int = 6) -> list[dict[str, Any]]:
                 "title": title,
                 "url": link,
                 "source": source or "Google News",
-                "published_at": pub,
+                "published_at": _iso(pub_dt) if pub_dt else pub_raw,
+                "published_ts": pub_dt.timestamp() if pub_dt else 0,
                 "snippet": desc[:280],
                 "provider": "google_news",
             }
         )
-        if len(items) >= max(1, min(limit, 12)):
+        if len(items) >= max(1, min(limit, 15)):
             break
     return items
 
@@ -81,19 +125,36 @@ def fetch_recent_papers(
     topic: str,
     *,
     limit: int = 5,
+    days: int = 7,
     semantic_scholar_key: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Scholar hits biased to recent years; days window is soft (year granularity)."""
     q = (topic or "").strip()
     if len(q) < 2:
         return []
-    # Prefer Crossref; S2 as backup for CS/security depth.
-    rows = search_crossref(q, limit=max(limit, 8))
+    rows = search_crossref(q, limit=max(limit, 10))
     if len(rows) < 3:
         rows.extend(
-            search_semantic_scholar(q, limit=max(limit, 6), api_key=semantic_scholar_key)
+            search_semantic_scholar(q, limit=max(limit, 8), api_key=semantic_scholar_key)
         )
 
-    # Prefer newer / more cited among topical hits.
+    now = datetime.now(timezone.utc)
+    # Papers rarely have daily timestamps; keep current + previous year when days <= 30.
+    min_year = now.year if days <= 14 else now.year - 1
+
+    filtered: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            y = int(r.get("year") or 0)
+        except ValueError:
+            y = 0
+        if y and y < min_year:
+            continue
+        filtered.append(r)
+
+    if not filtered:
+        filtered = rows  # fall back if everything was older
+
     def sort_key(r: dict[str, Any]) -> tuple:
         try:
             y = int(r.get("year") or 0)
@@ -101,17 +162,21 @@ def fetch_recent_papers(
             y = 0
         return (-y, -int(r.get("cited_by_count") or 0))
 
-    rows = sorted(rows, key=sort_key)
+    filtered = sorted(filtered, key=sort_key)
     out: list[dict[str, Any]] = []
-    for r in rows[: max(1, min(limit, 10))]:
+    for r in filtered[: max(1, min(limit, 10))]:
+        year = str(r.get("year") or "")
+        pub_dt = _parse_dt(year)
         out.append(
             {
                 "kind": "paper",
                 "topic": q,
                 "title": r.get("title") or "Untitled",
                 "url": r.get("url") or "",
-                "source": r.get("venue") or ",".join(r.get("sources") or [r.get("source") or "scholar"]),
-                "published_at": str(r.get("year") or ""),
+                "source": r.get("venue")
+                or ",".join(r.get("sources") or [r.get("source") or "scholar"]),
+                "published_at": year,
+                "published_ts": pub_dt.timestamp() if pub_dt else 0,
                 "snippet": (r.get("abstract") or "")[:280],
                 "author": r.get("author") or "",
                 "cited_by_count": r.get("cited_by_count") or 0,
@@ -126,12 +191,15 @@ def fetch_recent_papers(
 def build_topic_feed(
     topics: list[str],
     *,
-    per_topic_news: int = 4,
+    days: int = 7,
+    per_topic_news: int = 5,
     per_topic_papers: int = 3,
     semantic_scholar_key: str | None = None,
     openalex_key: str | None = None,
 ) -> dict[str, Any]:
-    _ = openalex_key  # reserved; Crossref/S2 are enough for feed latency
+    """Live feed pull (no disk cache). Call on dashboard load or Update now."""
+    _ = openalex_key
+    days = max(1, min(int(days or 7), 30))
     cleaned: list[str] = []
     seen_t: set[str] = set()
     for t in topics or []:
@@ -146,11 +214,15 @@ def build_topic_feed(
         if len(cleaned) >= 8:
             break
 
+    generated_at = datetime.now(timezone.utc)
     if not cleaned:
         return {
             "topics": [],
             "items": [],
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "days": days,
+            "generated_at": generated_at.isoformat(),
+            "window_start": (generated_at - timedelta(days=days)).isoformat(),
+            "live": True,
             "message": "Add follow topics in Settings to build a research news feed.",
         }
 
@@ -158,7 +230,7 @@ def build_topic_feed(
     errors: list[str] = []
     for topic in cleaned:
         try:
-            items.extend(fetch_google_news(topic, limit=per_topic_news))
+            items.extend(fetch_google_news(topic, limit=per_topic_news, days=days))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"news/{topic}: {exc}")
         try:
@@ -166,13 +238,13 @@ def build_topic_feed(
                 fetch_recent_papers(
                     topic,
                     limit=per_topic_papers,
+                    days=days,
                     semantic_scholar_key=semantic_scholar_key,
                 )
             )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"papers/{topic}: {exc}")
 
-    # Dedupe by URL/title
     merged: dict[str, dict[str, Any]] = {}
     for it in items:
         key = (it.get("url") or "").lower().strip() or re.sub(
@@ -184,39 +256,41 @@ def build_topic_feed(
             merged[key] = it
 
     ranked = list(merged.values())
-
-    def _rank(it: dict[str, Any]) -> tuple:
-        # Prefer fresher news first, then papers with citations.
-        kind_rank = 0 if it.get("kind") == "news" else 1
-        pub = it.get("published_at") or ""
-        return (kind_rank, pub if isinstance(pub, str) else "", -int(it.get("cited_by_count") or 0))
-
-    # Sort news by published_at desc roughly: put ISO-like dates first
     news = [i for i in ranked if i.get("kind") == "news"]
     papers = [i for i in ranked if i.get("kind") == "paper"]
-    news.sort(key=lambda i: i.get("published_at") or "", reverse=True)
-    papers.sort(key=lambda i: (-int(i.get("cited_by_count") or 0), str(i.get("published_at") or "")), reverse=False)
-    papers.sort(key=lambda i: str(i.get("published_at") or "0"), reverse=True)
+    news.sort(key=lambda i: float(i.get("published_ts") or 0), reverse=True)
+    papers.sort(
+        key=lambda i: (
+            float(i.get("published_ts") or 0),
+            int(i.get("cited_by_count") or 0),
+        ),
+        reverse=True,
+    )
 
-    # Interleave a bit: keep chronological-ish feed with papers mixed in
-    combined = news[:24] + papers[:16]
-    combined = combined[:40]
+    # Chronological news first, then recent papers.
+    combined = news[:24] + papers[:12]
+    combined = combined[:36]
 
     return {
         "topics": cleaned,
         "items": combined,
         "news_count": len(news),
         "paper_count": len(papers),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "days": days,
+        "generated_at": generated_at.isoformat(),
+        "window_start": (generated_at - timedelta(days=days)).isoformat(),
+        "live": True,
         "errors": errors,
         "message": (
-            f"Feed for {len(cleaned)} topic(s): {len(news)} news · {len(papers)} papers."
+            f"Live feed (last {days} days) · {len(cleaned)} topic(s) · "
+            f"{len(news)} news · {len(papers)} papers."
             if combined
-            else "No feed items returned. Check network or refine follow topics."
+            else f"No items in the last {days} days. Try Refresh, broaden topics, or widen the window."
         ),
         "note": (
-            "News via Google News RSS. Papers via Crossref/Semantic Scholar. "
-            "Edit follow topics in Settings."
+            "News is a live Google News RSS pull filtered to the selected window "
+            f"(default {days} days). Papers are recent scholarly hits (year-level). "
+            "Use Update now / Refresh feed to re-pull. Edit follow topics in Settings."
         ),
-        "stale_after_minutes": 30,
+        "stale_after_minutes": 0,
     }

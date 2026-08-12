@@ -28,6 +28,7 @@ export default function HomeDashboardPage() {
   const [searchQ, setSearchQ] = useState("");
   const [feed, setFeed] = useState(null);
   const [feedBusy, setFeedBusy] = useState(false);
+  const [feedDays, setFeedDays] = useState(7);
 
   async function loadProjects() {
     const data = await api("/api/projects");
@@ -43,11 +44,13 @@ export default function HomeDashboardPage() {
     }
   }
 
-  async function loadFeed() {
+  async function loadFeed(daysOverride) {
+    const days = Number(daysOverride ?? feedDays) || 7;
     setFeedBusy(true);
     try {
-      const f = await api("/api/workspace/feed");
+      const f = await api(`/api/workspace/feed?days=${days}`);
       setFeed(f);
+      if (f?.days) setFeedDays(f.days);
     } catch {
       setFeed(null);
     } finally {
@@ -167,12 +170,36 @@ export default function HomeDashboardPage() {
           <div>
             <h2 style={{ margin: 0 }}>Research radar</h2>
             <p className="muted" style={{ margin: "0.25rem 0 0" }}>
-              Latest news and papers for topics you follow. Edit topics in Settings.
+              Live Google News RSS + recent papers for topics you follow. Default window: last 7 days.
             </p>
           </div>
           <div className="row">
-            <button className="btn ghost" type="button" onClick={loadFeed} disabled={feedBusy}>
-              {feedBusy ? "Refreshing…" : "Refresh feed"}
+            <label style={{ margin: 0 }}>
+              Window
+              <select
+                value={feedDays}
+                disabled={feedBusy}
+                onChange={(e) => {
+                  const d = Number(e.target.value) || 7;
+                  setFeedDays(d);
+                  loadFeed(d);
+                }}
+              >
+                <option value={1}>Last 24 hours</option>
+                <option value={3}>Last 3 days</option>
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+                <option value={30}>Last 30 days</option>
+              </select>
+            </label>
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => loadFeed()}
+              disabled={feedBusy}
+              title="Re-pull Google News RSS and papers now"
+            >
+              {feedBusy ? "Updating…" : "Update now"}
             </button>
             <button className="btn" type="button" onClick={() => navigate("/settings")}>
               Follow topics
@@ -191,10 +218,21 @@ export default function HomeDashboardPage() {
             ))}
           </div>
         )}
-        {feed?.message && <p className="muted" style={{ margin: 0 }}>{feed.message}</p>}
+        <p className="muted" style={{ margin: 0 }}>
+          {feed?.message || ""}
+          {feed?.generated_at
+            ? ` · Updated ${new Date(feed.generated_at).toLocaleString()}`
+            : ""}
+          {feed?.live ? " · live pull" : ""}
+        </p>
+        {feed?.note && (
+          <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+            {feed.note}
+          </p>
+        )}
         {!feed?.items?.length && !feedBusy && (
           <p className="muted">
-            No feed items yet. Add follow topics under Settings, then refresh.
+            No items in this window. Click Update now, broaden topics in Settings, or widen the window.
           </p>
         )}
         <div className="stack" style={{ maxHeight: 420, overflow: "auto" }}>
