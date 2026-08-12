@@ -257,6 +257,8 @@ class AiCheckOut(BaseModel):
     filename: str | None = None
     char_count: int | None = None
     truncated: bool | None = None
+    ocr_used: bool | None = None
+    ocr_note: str | None = None
 
 
 class TextExtractOut(BaseModel):
@@ -266,6 +268,9 @@ class TextExtractOut(BaseModel):
     truncated: bool
     text: str
     supported_extensions: list[str]
+    ocr_used: bool = False
+    ocr_note: str = ""
+    ocr_available: bool = False
 
 
 class JudgeRequest(BaseModel):

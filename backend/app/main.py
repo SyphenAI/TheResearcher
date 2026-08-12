@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine
-from app.routers import auth, health, projects, research, secrets, workspace
+from app.routers import auth, health, projects, research, search, secrets, workspace
 from app.routers import settings as settings_router
 from app.services.migrate import ensure_schema
 from app.services.startup import ensure_seed_data, log_startup, run_self_check
@@ -66,6 +66,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(research.router)
+app.include_router(search.router)
 app.include_router(secrets.router)
 app.include_router(settings_router.router)
 app.include_router(workspace.router)

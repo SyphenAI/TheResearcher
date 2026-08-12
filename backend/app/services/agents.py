@@ -79,6 +79,7 @@ def run_research_panel(
         provider=role_map["researcher"],
         system=SYSTEM_BASE + " Role: primary researcher. Produce structured markdown findings.",
         messages=[{"role": "user", "content": user_blob + "\n\nProduce a working research draft."}],
+        purpose="research",
     )
     if r.error:
         errors.append(f"researcher/{r.provider}: {r.error}")
@@ -102,6 +103,7 @@ def run_research_panel(
                 ),
             }
         ],
+        purpose="research_critic",
     )
     critique = c.content if not c.error else "Critic unavailable. Review citations and residual risk manually."
     if c.error:
@@ -124,6 +126,7 @@ def run_research_panel(
                 ),
             }
         ],
+        purpose="research_red_team",
     )
     red = rt.content if not rt.error else "Red-team pass unavailable."
     if rt.error:
@@ -151,6 +154,7 @@ def run_research_panel(
                 ),
             }
         ],
+        purpose="research_synth",
     )
     if synth.error or not synth.content.strip():
         content = (

@@ -10,6 +10,7 @@ import AiCheckerPage from "./pages/AiCheckerPage";
 import UsersPage from "./pages/UsersPage";
 import HealthPage from "./pages/HealthPage";
 import SettingsPage from "./pages/SettingsPage";
+import SearchPage from "./pages/SearchPage";
 
 function Shell({ children }) {
   const { user, logout } = useAuth();
@@ -34,6 +35,7 @@ function Shell({ children }) {
   if (role === "reviewer") {
     nav.push(
       { path: "/app", label: "Dashboard", active: dashActive },
+      { path: "/search", label: "Search", active: route.startsWith("/search") },
       { path: "/ai-check", label: "AI Checker", active: route.startsWith("/ai-check") },
       { path: "/settings", label: "Settings", active: route.startsWith("/settings") },
       { path: "/health", label: "Health", active: route.startsWith("/health") }
@@ -41,6 +43,7 @@ function Shell({ children }) {
   } else {
     nav.push(
       { path: "/app", label: "Dashboard", active: dashActive },
+      { path: "/search", label: "Search", active: route.startsWith("/search") },
       { path: "/ai-check", label: "AI Checker", active: route.startsWith("/ai-check") },
       { path: "/security", label: "Security", active: route.startsWith("/security") },
       { path: "/settings", label: "Settings", active: route.startsWith("/settings") }
@@ -105,6 +108,7 @@ export default function App() {
       <Route path="/change-password" element={<ChangePasswordPage />} />
       <Route path="/app" element={<PrivateRoute><HomeDashboardPage /></PrivateRoute>} />
       <Route path="/app/research/:projectId" element={<PrivateRoute><ResearchWorkspacePage /></PrivateRoute>} />
+      <Route path="/search" element={<PrivateRoute><SearchPage /></PrivateRoute>} />
       <Route path="/security" element={<PrivateRoute><SecurityPage /></PrivateRoute>} />
       <Route path="/settings" element={<PrivateRoute><SettingsPage /></PrivateRoute>} />
       <Route path="/ai-check" element={<PrivateRoute><AiCheckerPage /></PrivateRoute>} />

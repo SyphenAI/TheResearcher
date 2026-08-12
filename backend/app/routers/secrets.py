@@ -247,6 +247,39 @@ def set_research_usage(
     return _to_out(row)
 
 
+@router.get("/usage")
+def llm_usage(
+    days: int = 30,
+    limit: int = 40,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> dict:
+    """Rough token and USD estimate log for live LLM calls."""
+    from app.services.usage import usage_summary
+
+    _ = user
+    return usage_summary(db, days=days, limit=limit)
+
+
+@router.delete("/usage", status_code=200)
+def clear_llm_usage(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> dict:
+    from app.models import LlmUsageEvent
+    from app.services.audit import log_security_event
+
+    count = db.query(LlmUsageEvent).delete()
+    log_security_event(
+        db,
+        actor=user.username,
+        action="usage_clear",
+        detail=f"Cleared {count} LLM usage event(s).",
+    )
+    db.commit()
+    return {"ok": True, "deleted": int(count or 0)}
+
+
 @router.post("/tokens/{token_id}/test", response_model=TokenTestResult)
 def test_token(
     token_id: int,

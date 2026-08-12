@@ -173,6 +173,8 @@ def rewrite_text(
             ),
             messages=[{"role": "user", "content": body.text[:12000]}],
             max_tokens=2500,
+            purpose="rewrite",
+            created_by=user.username,
         )
         if live.content and not live.error:
             rewritten = humanize_text(live.content, strength=body.strength)
@@ -189,10 +191,18 @@ def rewrite_text(
 
 @router.get("/extract/formats")
 def list_extract_formats(_: User = Depends(get_current_user)) -> dict:
+    from app.services.document_text import ocr_available
+
     return {
         "extensions": sorted(SUPPORTED_EXTENSIONS),
+        "ocr_available": ocr_available(),
         "notes": [
-            "PDF text extraction works for text-based PDFs (no OCR for scans yet).",
+            "PDF text extraction uses the embedded text layer first.",
+            (
+                "Scanned PDFs: OCR is available (tesseract, up to 15 pages)."
+                if ocr_available()
+                else "Scanned PDFs: OCR binary not detected in this runtime."
+            ),
             "Word support is .docx (not legacy .doc).",
             "Also: pptx, odt, txt, md, csv, html, rtf, json, log.",
         ],
@@ -259,6 +269,8 @@ async def ai_check_upload(
     result.filename = extracted["filename"]
     result.char_count = extracted["char_count"]
     result.truncated = extracted["truncated"]
+    result.ocr_used = bool(extracted.get("ocr_used"))
+    result.ocr_note = extracted.get("ocr_note") or ""
     return result
 
 
@@ -396,6 +408,9 @@ def judge_output(
                 }
             ],
             max_tokens=700,
+            purpose="judge",
+            project_id=body.project_id,
+            created_by=user.username,
         )
         if live.content and not live.error:
             models_used.append(f"{provider}:{live.model}" if live.model else provider)

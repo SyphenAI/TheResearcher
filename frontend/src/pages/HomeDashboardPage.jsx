@@ -25,6 +25,7 @@ export default function HomeDashboardPage() {
   const [providers, setProviders] = useState([]);
   const [archived, setArchived] = useState([]);
   const [globalMaxAgent, setGlobalMaxAgent] = useState(10);
+  const [searchQ, setSearchQ] = useState("");
 
   async function loadProjects() {
     const data = await api("/api/projects");
@@ -123,6 +124,24 @@ export default function HomeDashboardPage() {
             Pick a topic template for this week's research, or open an existing project.
           </p>
         </div>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const q = searchQ.trim();
+            if (q.length >= 2) navigate(`/search?q=${encodeURIComponent(q)}`);
+          }}
+        >
+          <input
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            placeholder="Search projects & paper text"
+            style={{ minWidth: 220 }}
+          />
+          <button className="btn" type="submit">
+            Search
+          </button>
+        </form>
       </div>
 
       {error && <div className="alert error">{error}</div>}

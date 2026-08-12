@@ -5,7 +5,9 @@ from __future__ import annotations
 import csv
 import html
 import io
+import logging
 import re
+import shutil
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -13,9 +15,13 @@ from xml.etree import ElementTree as ET
 from docx import Document
 from pypdf import PdfReader
 
+logger = logging.getLogger("theresearcher")
+
 # Hard cap so AI Checker stays local and cheap.
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 MAX_EXTRACT_CHARS = 400_000
+OCR_MAX_PAGES = 15
+OCR_MIN_CHARS = 80
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -39,10 +45,17 @@ class DocumentExtractError(ValueError):
     pass
 
 
+def ocr_available() -> bool:
+    """True when tesseract binary is on PATH (optional dependency)."""
+    return bool(shutil.which("tesseract"))
+
+
 def extract_text_from_upload(
     filename: str,
     data: bytes,
     content_type: str | None = None,
+    *,
+    enable_ocr: bool = True,
 ) -> dict:
     if not data:
         raise DocumentExtractError("Empty file.")
@@ -62,8 +75,10 @@ def extract_text_from_upload(
             f"Use: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
         )
 
+    ocr_used = False
+    ocr_note = ""
     if ext == ".pdf":
-        text = _from_pdf(data)
+        text, ocr_used, ocr_note = _from_pdf(data, enable_ocr=enable_ocr)
     elif ext == ".docx":
         text = _from_docx(data)
     elif ext == ".pptx":
@@ -83,8 +98,13 @@ def extract_text_from_upload(
 
     text = _normalize(text)
     if not text.strip():
+        if ext == ".pdf" and enable_ocr and not ocr_available():
+            raise DocumentExtractError(
+                "No readable text found. This looks like a scanned PDF, but OCR is not available "
+                "in this image (tesseract missing). Rebuild with OCR packages or paste text."
+            )
         raise DocumentExtractError(
-            "No readable text found. Scanned PDFs without OCR are not supported yet."
+            "No readable text found. Scanned PDFs need OCR; try re-exporting or pasting text."
         )
 
     truncated = False
@@ -98,6 +118,9 @@ def extract_text_from_upload(
         "char_count": len(text),
         "truncated": truncated,
         "text": text,
+        "ocr_used": ocr_used,
+        "ocr_note": ocr_note,
+        "ocr_available": ocr_available(),
     }
 
 
@@ -128,7 +151,7 @@ def _from_plain(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _from_pdf(data: bytes) -> str:
+def _from_pdf(data: bytes, *, enable_ocr: bool = True) -> tuple[str, bool, str]:
     try:
         reader = PdfReader(io.BytesIO(data))
     except Exception as exc:  # noqa: BLE001
@@ -139,6 +162,56 @@ def _from_pdf(data: bytes) -> str:
             parts.append(page.extract_text() or "")
         except Exception:  # noqa: BLE001
             continue
+    text = "\n".join(parts)
+    if len(text.strip()) >= OCR_MIN_CHARS:
+        return text, False, ""
+
+    if not enable_ocr:
+        return text, False, "Sparse text layer; OCR disabled for this request."
+
+    if not ocr_available():
+        return text, False, "Sparse text layer; tesseract OCR not installed."
+
+    try:
+        ocr_text = _ocr_pdf_pages(data)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PDF OCR failed: %s", exc)
+        return text, False, f"OCR attempted but failed: {exc}"
+
+    merged = (text + "\n" + ocr_text).strip() if text.strip() else ocr_text
+    if not merged.strip():
+        return "", True, "OCR ran but found no text."
+    return merged, True, f"OCR used on up to {OCR_MAX_PAGES} page(s)."
+
+
+def _ocr_pdf_pages(data: bytes) -> str:
+    try:
+        import fitz  # pymupdf
+        import pytesseract
+        from PIL import Image
+    except ImportError as exc:
+        raise DocumentExtractError(
+            "OCR libraries missing (pymupdf/pytesseract/Pillow)."
+        ) from exc
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    parts: list[str] = []
+    page_count = min(doc.page_count, OCR_MAX_PAGES)
+    # Slightly lower DPI keeps OCR fast for local research packs.
+    zoom = 1.6
+    mat = fitz.Matrix(zoom, zoom)
+    for i in range(page_count):
+        page = doc.load_page(i)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        try:
+            page_text = pytesseract.image_to_string(img) or ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tesseract failed on page %s: %s", i + 1, exc)
+            continue
+        if page_text.strip():
+            parts.append(page_text)
+    doc.close()
     return "\n".join(parts)
 
 

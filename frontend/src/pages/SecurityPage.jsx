@@ -26,6 +26,16 @@ export default function SecurityPage() {
   const [busy, setBusy] = useState(false);
   const [backups, setBackups] = useState([]);
   const [testResult, setTestResult] = useState(null);
+  const [usage, setUsage] = useState(null);
+
+  async function loadUsage() {
+    try {
+      const u = await api("/api/security/usage?days=30&limit=25");
+      setUsage(u);
+    } catch {
+      setUsage(null);
+    }
+  }
 
   async function load() {
     const [p, t] = await Promise.all([
@@ -44,6 +54,7 @@ export default function SecurityPage() {
         setAudit([]);
         setAuditNote("");
       }
+      await loadUsage();
       try {
         const b = await api("/api/workspace/backups");
         setBackups(b.backups || []);
@@ -338,7 +349,7 @@ export default function SecurityPage() {
         <h1>Security</h1>
         <p className="muted">
           Manage provider API tokens. Tokens stay local and encrypted. A model can be active overall, then
-          included or excluded from Research and Judge separately.
+          included or excluded from Research and Judge separately. Usage estimates help pick cheaper models.
         </p>
       </div>
 
@@ -479,6 +490,134 @@ export default function SecurityPage() {
       ) : (
         <div className="alert warn">
           Only the admin researcher can write tokens. You can still view masked entries if permitted.
+        </div>
+      )}
+
+      {user?.role === "admin" && (
+        <div className="panel stack">
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <h2 style={{ margin: 0 }}>Usage & cost (30 days)</h2>
+            <div className="row">
+              <button className="btn ghost" type="button" disabled={busy} onClick={loadUsage}>
+                Refresh
+              </button>
+              <button
+                className="btn ghost"
+                type="button"
+                disabled={busy || !usage?.recent?.length}
+                onClick={async () => {
+                  if (!window.confirm("Clear all usage log rows?")) return;
+                  setBusy(true);
+                  try {
+                    await api("/api/security/usage", { method: "DELETE" });
+                    setMessage("Usage log cleared.");
+                    await loadUsage();
+                  } catch (e) {
+                    setError(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Clear log
+              </button>
+            </div>
+          </div>
+          {usage ? (
+            <>
+              <p className="muted" style={{ margin: 0 }}>
+                {usage.note}
+              </p>
+              <div className="grid-3">
+                <div className="metric">
+                  <span className="muted">Calls</span>
+                  <strong>{usage.total_calls}</strong>
+                </div>
+                <div className="metric">
+                  <span className="muted">Tokens in / out</span>
+                  <strong style={{ fontSize: "1rem" }}>
+                    {usage.input_tokens} / {usage.output_tokens}
+                  </strong>
+                </div>
+                <div className="metric">
+                  <span className="muted">Est. cost USD</span>
+                  <strong>${Number(usage.estimated_cost_usd || 0).toFixed(4)}</strong>
+                </div>
+              </div>
+              {(usage.by_model || []).length > 0 && (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Provider</th>
+                      <th>Model</th>
+                      <th>Calls</th>
+                      <th>In</th>
+                      <th>Out</th>
+                      <th>Est. $</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.by_model.map((r) => (
+                      <tr key={`${r.provider}-${r.model}`}>
+                        <td>{r.provider}</td>
+                        <td>
+                          <code>{r.model}</code>
+                        </td>
+                        <td>{r.calls}</td>
+                        <td>{r.input_tokens}</td>
+                        <td>{r.output_tokens}</td>
+                        <td>${Number(r.estimated_cost_usd || 0).toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {(usage.recent || []).length > 0 && (
+                <>
+                  <h3 style={{ margin: 0 }}>Recent calls</h3>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>When</th>
+                        <th>Purpose</th>
+                        <th>Model</th>
+                        <th>Tokens</th>
+                        <th>Est. $</th>
+                        <th>OK</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usage.recent.map((e) => (
+                        <tr key={e.id}>
+                          <td className="muted">{e.created_at}</td>
+                          <td>{e.purpose}</td>
+                          <td>
+                            <code>
+                              {e.provider}/{e.model}
+                            </code>
+                          </td>
+                          <td>
+                            {e.input_tokens}/{e.output_tokens}
+                          </td>
+                          <td>${Number(e.estimated_cost_usd || 0).toFixed(4)}</td>
+                          <td>
+                            <span className={`badge ${e.ok ? "good" : "bad"}`}>
+                              {e.ok ? "ok" : "fail"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+              {!usage.total_calls && (
+                <p className="muted">No live model calls logged yet. Research, Judge, or Rewrite will fill this.</p>
+              )}
+            </>
+          ) : (
+            <p className="muted">Usage summary unavailable.</p>
+          )}
         </div>
       )}
 

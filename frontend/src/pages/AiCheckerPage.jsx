@@ -278,7 +278,10 @@ export default function AiCheckerPage() {
       setResult(null);
       setMessage(
         `Loaded ${extracted.filename} (${extracted.char_count} chars` +
-          `${extracted.truncated ? ", truncated" : ""}). Review text, then run AI check.`
+          `${extracted.truncated ? ", truncated" : ""}` +
+          `${extracted.ocr_used ? ", OCR used for scanned PDF" : ""}). ` +
+          `${extracted.ocr_note ? extracted.ocr_note + " " : ""}` +
+          `Review text, then run AI check.`
       );
       if (fileRef.current) fileRef.current.value = "";
     } catch (e) {
@@ -312,7 +315,9 @@ export default function AiCheckerPage() {
       setMessage(
         `Checked ${res.filename || file.name}` +
           `${res.char_count != null ? ` (${res.char_count} chars)` : ""}` +
-          `${res.truncated ? " (truncated for size)" : ""}. AI likelihood ${res.ai_pct}%.`
+          `${res.truncated ? " (truncated for size)" : ""}` +
+          `${res.ocr_used ? " (OCR used)" : ""}. AI likelihood ${res.ai_pct}%.` +
+          `${res.ocr_note ? " " + res.ocr_note : ""}`
       );
       await loadHistory();
       if (fileRef.current) fileRef.current.value = "";

@@ -182,6 +182,9 @@ class LLMResult:
     model: str
     used_live: bool
     error: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
 
 
 def list_active_providers(
@@ -298,7 +301,7 @@ def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
         last_model = model
         try:
             if style == "anthropic":
-                content = _anthropic_chat(
+                content, _usage = _anthropic_chat(
                     api_key,
                     meta,
                     model,
@@ -308,7 +311,7 @@ def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
                     temperature=0,
                 )
             elif style == "google":
-                content = _google_chat(
+                content, _usage = _google_chat(
                     api_key,
                     meta,
                     model,
@@ -318,7 +321,7 @@ def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
                     temperature=0,
                 )
             else:
-                content = _openai_style_chat(
+                content, _usage = _openai_style_chat(
                     api_key,
                     meta,
                     model,
@@ -376,7 +379,12 @@ def chat(
     temperature: float = 0.4,
     max_tokens: int = 2200,
     system: str | None = None,
+    purpose: str = "chat",
+    project_id: int | None = None,
+    created_by: str = "",
 ) -> LLMResult:
+    from app.services.usage import estimate_cost_usd, estimate_tokens_from_text, log_usage
+
     provider = provider.strip().lower()
     meta = PROVIDER_DEFAULTS.get(provider)
     if not meta:
@@ -396,34 +404,83 @@ def chat(
     style = meta["style"]
     preferred = model or (getattr(token_row, "model", "") or "").strip() or None
     last_err = ""
+    started = datetime.now(timezone.utc)
+    prompt_blob = (system or "") + "\n" + "\n".join(m.get("content", "") for m in messages)
     for use_model in _model_candidates(
         meta, preferred, api_key=api_key, provider=provider
     ):
         try:
             if style == "anthropic":
-                content = _anthropic_chat(
+                content, usage = _anthropic_chat(
                     api_key, meta, use_model, messages, system, max_tokens, temperature
                 )
             elif style == "google":
-                content = _google_chat(
+                content, usage = _google_chat(
                     api_key, meta, use_model, messages, system, max_tokens, temperature
                 )
             else:
-                content = _openai_style_chat(
+                content, usage = _openai_style_chat(
                     api_key, meta, use_model, messages, system, max_tokens, temperature, provider
                 )
             token_row.last_used_at = datetime.now(timezone.utc)
             db.commit()
+            content = (content or "").strip()
+            in_tok = int(usage.get("input_tokens") or 0)
+            out_tok = int(usage.get("output_tokens") or 0)
+            if in_tok <= 0:
+                in_tok = estimate_tokens_from_text(prompt_blob)
+            if out_tok <= 0:
+                out_tok = estimate_tokens_from_text(content)
+            cost = estimate_cost_usd(use_model, in_tok, out_tok)
+            latency = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+            try:
+                log_usage(
+                    db,
+                    provider=provider,
+                    model=use_model,
+                    purpose=purpose,
+                    label=token_row.label,
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
+                    latency_ms=latency,
+                    ok=True,
+                    project_id=project_id,
+                    created_by=created_by,
+                    estimated_cost_usd=cost,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return LLMResult(
-                content=content.strip(),
+                content=content,
                 provider=provider,
                 model=use_model,
                 used_live=True,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                estimated_cost_usd=cost,
             )
         except Exception as exc:  # noqa: BLE001
             last_err = str(exc)
             if _is_model_not_found_error(last_err):
                 continue
+            try:
+                log_usage(
+                    db,
+                    provider=provider,
+                    model=use_model,
+                    purpose=purpose,
+                    label=token_row.label,
+                    latency_ms=int(
+                        (datetime.now(timezone.utc) - started).total_seconds() * 1000
+                    ),
+                    ok=False,
+                    error=last_err[:500],
+                    project_id=project_id,
+                    created_by=created_by,
+                    estimated_cost_usd=0.0,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return LLMResult(
                 content="",
                 provider=provider,
@@ -449,7 +506,7 @@ def _openai_style_chat(
     max_tokens: int,
     temperature: float,
     provider: str,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     base = meta["base_url"].rstrip("/")
     if not base:
         raise ValueError(f"{provider} base URL is not configured")
@@ -495,7 +552,13 @@ def _openai_style_chat(
     if content is None:
         # Some reasoning models return empty content with refusal/tool fields.
         content = message.get("refusal") or ""
-    return str(content)
+    usage = data.get("usage") or {}
+    return str(content), {
+        "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+        "output_tokens": int(
+            usage.get("completion_tokens") or usage.get("output_tokens") or 0
+        ),
+    }
 
 
 def _anthropic_chat(
@@ -506,7 +569,7 @@ def _anthropic_chat(
     system: str | None,
     max_tokens: int,
     temperature: float,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     headers = {
         "x-api-key": api_key,
         "anthropic-version": "2023-06-01",
@@ -544,7 +607,12 @@ def _anthropic_chat(
         raise RuntimeError(f"anthropic API {resp.status_code}: {resp.text[:400]}")
     data = resp.json()
     parts = data.get("content") or []
-    return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+    text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+    usage = data.get("usage") or {}
+    return text, {
+        "input_tokens": int(usage.get("input_tokens") or 0),
+        "output_tokens": int(usage.get("output_tokens") or 0),
+    }
 
 
 def _google_chat(
@@ -555,7 +623,7 @@ def _google_chat(
     system: str | None,
     max_tokens: int,
     temperature: float,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     contents = []
     for m in messages:
         role = "user" if m["role"] == "user" else "model"
@@ -575,6 +643,11 @@ def _google_chat(
         data = resp.json()
     cands = data.get("candidates") or []
     if not cands:
-        return ""
+        return "", {"input_tokens": 0, "output_tokens": 0}
     parts = cands[0].get("content", {}).get("parts") or []
-    return "".join(p.get("text", "") for p in parts)
+    text = "".join(p.get("text", "") for p in parts)
+    meta_u = data.get("usageMetadata") or {}
+    return text, {
+        "input_tokens": int(meta_u.get("promptTokenCount") or 0),
+        "output_tokens": int(meta_u.get("candidatesTokenCount") or 0),
+    }
