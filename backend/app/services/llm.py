@@ -17,33 +17,74 @@ PROVIDER_DEFAULTS = {
         "base_url": "https://api.openai.com/v1",
         "chat_path": "/chat/completions",
         "default_model": "gpt-4o-mini",
+        "model_fallbacks": ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
         "style": "openai",
     },
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",
         "chat_path": "/messages",
-        "default_model": "claude-sonnet-4-20250514",
+        # Prefer broadly available aliases first; fall back across recent Sonnet IDs.
+        "default_model": "claude-3-5-sonnet-latest",
+        "model_fallbacks": [
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-7-sonnet-latest",
+            "claude-sonnet-4-20250514",
+            "claude-3-5-haiku-latest",
+            "claude-3-haiku-20240307",
+        ],
         "style": "anthropic",
     },
     "xai": {
         "base_url": "https://api.x.ai/v1",
         "chat_path": "/chat/completions",
         "default_model": "grok-2-latest",
+        "model_fallbacks": ["grok-2-latest", "grok-3-mini", "grok-3"],
         "style": "openai",
     },
     "google": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "chat_path": "/models/{model}:generateContent",
         "default_model": "gemini-2.0-flash",
+        "model_fallbacks": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
         "style": "google",
     },
     "azure_openai": {
         "base_url": "",
         "chat_path": "/chat/completions",
         "default_model": "gpt-4o-mini",
+        "model_fallbacks": ["gpt-4o-mini"],
         "style": "openai",
     },
 }
+
+
+def _model_candidates(meta: dict[str, Any], preferred: str | None = None) -> list[str]:
+    models: list[str] = []
+    if preferred:
+        models.append(preferred)
+    models.append(meta.get("default_model") or "")
+    models.extend(meta.get("model_fallbacks") or [])
+    out: list[str] = []
+    seen: set[str] = set()
+    for model in models:
+        name = (model or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _is_model_not_found_error(err: str) -> bool:
+    text = (err or "").lower()
+    return (
+        "model:" in text
+        or "not_found_error" in text
+        or "does not exist" in text
+        or "model_not_found" in text
+        or ("404" in text and "model" in text)
+    )
 
 
 @dataclass
@@ -154,72 +195,82 @@ def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
             "latency_ms": None,
         }
 
-    model = meta["default_model"]
     style = meta["style"]
+    candidates = _model_candidates(meta)
     started = datetime.now(timezone.utc)
-    try:
-        if style == "anthropic":
-            content = _anthropic_chat(
-                api_key,
-                meta,
-                model,
-                [{"role": "user", "content": "Reply with exactly: pong"}],
-                system="You are a connectivity probe. Reply with only the word pong.",
-                max_tokens=16,
-                temperature=0,
-            )
-        elif style == "google":
-            content = _google_chat(
-                api_key,
-                meta,
-                model,
-                [{"role": "user", "content": "Reply with exactly: pong"}],
-                system="You are a connectivity probe. Reply with only the word pong.",
-                max_tokens=16,
-                temperature=0,
-            )
-        else:
-            content = _openai_style_chat(
-                api_key,
-                meta,
-                model,
-                [{"role": "user", "content": "Reply with exactly: pong"}],
-                system="You are a connectivity probe. Reply with only the word pong.",
-                max_tokens=16,
-                temperature=0,
-                provider=provider,
-            )
-        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
-        token_row.last_used_at = datetime.now(timezone.utc)
-        db.commit()
-        preview = (content or "").strip().replace("\n", " ")[:80]
-        return {
-            "ok": True,
-            "provider": provider,
-            "label": token_row.label,
-            "model": model,
-            "message": f"Connected. Model responded ({preview or 'empty body'}).",
-            "latency_ms": elapsed,
-            "active": bool(token_row.is_active),
-            "use_for_research": bool(getattr(token_row, "use_for_research", True)),
-            "use_for_judge": bool(getattr(token_row, "use_for_judge", True)),
-        }
-    except Exception as exc:  # noqa: BLE001
-        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
-        err = str(exc)
-        if len(err) > 280:
-            err = err[:279] + "…"
-        return {
-            "ok": False,
-            "provider": provider,
-            "label": token_row.label,
-            "model": model,
-            "message": err,
-            "latency_ms": elapsed,
-            "active": bool(token_row.is_active),
-            "use_for_research": bool(getattr(token_row, "use_for_research", True)),
-            "use_for_judge": bool(getattr(token_row, "use_for_judge", True)),
-        }
+    last_err = ""
+    last_model = candidates[0] if candidates else meta.get("default_model", "")
+
+    for model in candidates:
+        last_model = model
+        try:
+            if style == "anthropic":
+                content = _anthropic_chat(
+                    api_key,
+                    meta,
+                    model,
+                    [{"role": "user", "content": "Reply with exactly: pong"}],
+                    system="You are a connectivity probe. Reply with only the word pong.",
+                    max_tokens=16,
+                    temperature=0,
+                )
+            elif style == "google":
+                content = _google_chat(
+                    api_key,
+                    meta,
+                    model,
+                    [{"role": "user", "content": "Reply with exactly: pong"}],
+                    system="You are a connectivity probe. Reply with only the word pong.",
+                    max_tokens=16,
+                    temperature=0,
+                )
+            else:
+                content = _openai_style_chat(
+                    api_key,
+                    meta,
+                    model,
+                    [{"role": "user", "content": "Reply with exactly: pong"}],
+                    system="You are a connectivity probe. Reply with only the word pong.",
+                    max_tokens=16,
+                    temperature=0,
+                    provider=provider,
+                )
+            elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+            token_row.last_used_at = datetime.now(timezone.utc)
+            db.commit()
+            preview = (content or "").strip().replace("\n", " ")[:80]
+            return {
+                "ok": True,
+                "provider": provider,
+                "label": token_row.label,
+                "model": model,
+                "message": f"Connected via {model}. Model responded ({preview or 'empty body'}).",
+                "latency_ms": elapsed,
+                "active": bool(token_row.is_active),
+                "use_for_research": bool(getattr(token_row, "use_for_research", True)),
+                "use_for_judge": bool(getattr(token_row, "use_for_judge", True)),
+            }
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+            if _is_model_not_found_error(last_err):
+                continue
+            break
+
+    elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+    err = last_err
+    if len(err) > 320:
+        err = err[:319] + "…"
+    return {
+        "ok": False,
+        "provider": provider,
+        "label": token_row.label,
+        "model": last_model,
+        "message": err or "Connectivity test failed.",
+        "latency_ms": elapsed,
+        "active": bool(token_row.is_active),
+        "use_for_research": bool(getattr(token_row, "use_for_research", True)),
+        "use_for_judge": bool(getattr(token_row, "use_for_judge", True)),
+    }
 
 
 def chat(
@@ -249,29 +300,48 @@ def chat(
         )
 
     api_key = decrypt_secret(token_row.encrypted_value)
-    use_model = model or meta["default_model"]
     style = meta["style"]
-
-    try:
-        if style == "anthropic":
-            content = _anthropic_chat(api_key, meta, use_model, messages, system, max_tokens, temperature)
-        elif style == "google":
-            content = _google_chat(api_key, meta, use_model, messages, system, max_tokens, temperature)
-        else:
-            content = _openai_style_chat(
-                api_key, meta, use_model, messages, system, max_tokens, temperature, provider
+    last_err = ""
+    for use_model in _model_candidates(meta, model):
+        try:
+            if style == "anthropic":
+                content = _anthropic_chat(
+                    api_key, meta, use_model, messages, system, max_tokens, temperature
+                )
+            elif style == "google":
+                content = _google_chat(
+                    api_key, meta, use_model, messages, system, max_tokens, temperature
+                )
+            else:
+                content = _openai_style_chat(
+                    api_key, meta, use_model, messages, system, max_tokens, temperature, provider
+                )
+            token_row.last_used_at = datetime.now(timezone.utc)
+            db.commit()
+            return LLMResult(
+                content=content.strip(),
+                provider=provider,
+                model=use_model,
+                used_live=True,
             )
-        token_row.last_used_at = datetime.now(timezone.utc)
-        db.commit()
-        return LLMResult(content=content.strip(), provider=provider, model=use_model, used_live=True)
-    except Exception as exc:  # noqa: BLE001
-        return LLMResult(
-            content="",
-            provider=provider,
-            model=use_model,
-            used_live=False,
-            error=str(exc),
-        )
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+            if _is_model_not_found_error(last_err):
+                continue
+            return LLMResult(
+                content="",
+                provider=provider,
+                model=use_model,
+                used_live=False,
+                error=last_err,
+            )
+    return LLMResult(
+        content="",
+        provider=provider,
+        model=model or meta["default_model"],
+        used_live=False,
+        error=last_err or f"No working model for {provider}",
+    )
 
 
 def _openai_style_chat(

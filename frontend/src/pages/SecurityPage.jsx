@@ -23,6 +23,7 @@ export default function SecurityPage() {
   const [auditNote, setAuditNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [backups, setBackups] = useState([]);
+  const [testResult, setTestResult] = useState(null);
 
   async function load() {
     const [p, t] = await Promise.all([
@@ -206,22 +207,63 @@ export default function SecurityPage() {
   async function testToken(token) {
     setBusy(true);
     setError("");
-    setMessage("");
+    setMessage(`Testing ${token.provider}/${token.label}…`);
+    setTestResult({
+      pending: true,
+      provider: token.provider,
+      label: token.label,
+      text: "Calling provider…",
+    });
     try {
       const res = await api(`/api/security/tokens/${token.id}/test`, { method: "POST" });
       const latency = res.latency_ms != null ? ` (${res.latency_ms}ms)` : "";
+      const text = res.ok
+        ? `Test passed for ${res.provider}/${res.label}${latency}. ${res.message || ""}`.trim()
+        : `Test failed for ${res.provider}/${res.label}${latency}. ${res.message || "No details."}`.trim();
+      setTestResult({
+        pending: false,
+        ok: !!res.ok,
+        provider: res.provider,
+        label: res.label,
+        model: res.model || "",
+        text,
+      });
       if (res.ok) {
-        setMessage(
-          `Test passed for ${res.provider}/${res.label}${latency}. ${res.message || ""}`.trim()
-        );
+        setMessage(text);
+        setError("");
       } else {
-        setError(
-          `Test failed for ${res.provider}/${res.label}${latency}. ${res.message || "No details."}`.trim()
-        );
+        setError(text);
+        setMessage("");
       }
-      await load();
+      // Keep result visible; refresh lists without wiping banners.
+      const [p, t] = await Promise.all([
+        api("/api/security/providers"),
+        api("/api/security/tokens"),
+      ]);
+      setProviders(p.providers || []);
+      setTokens(t);
+      if (user?.role === "admin") {
+        try {
+          const a = await api("/api/security/audit?limit=20");
+          setAudit(a.events || []);
+          setAuditNote(a.note || "");
+        } catch {
+          /* ignore */
+        }
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
-      setError(err.message);
+      const text = err.message || "Token test failed.";
+      setError(text);
+      setMessage("");
+      setTestResult({
+        pending: false,
+        ok: false,
+        provider: token.provider,
+        label: token.label,
+        text,
+      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setBusy(false);
     }
@@ -294,6 +336,23 @@ export default function SecurityPage() {
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
+      {testResult && (
+        <div className={`alert ${testResult.pending ? "warn" : testResult.ok ? "ok" : "error"}`}>
+          <strong>
+            {testResult.pending
+              ? "Token test running"
+              : testResult.ok
+                ? "Token test passed"
+                : "Token test failed"}
+          </strong>
+          <div style={{ marginTop: "0.35rem" }}>{testResult.text}</div>
+          {testResult.model ? (
+            <div className="muted" style={{ marginTop: "0.25rem" }}>
+              Model: {testResult.model}
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {user?.role === "admin" ? (
         <form className="panel stack" onSubmit={saveToken}>
