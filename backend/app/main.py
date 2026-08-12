@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine
-from app.routers import auth, health, projects, research, secrets, settings, workspace
+from app.routers import auth, health, projects, research, secrets, workspace
+from app.routers import settings as settings_router
 from app.services.migrate import ensure_schema
 from app.services.startup import ensure_seed_data, log_startup, run_self_check
 
@@ -21,8 +22,8 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    settings = get_settings()
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = get_settings()
+    cfg.data_dir.mkdir(parents=True, exist_ok=True)
     from app.services.storage_paths import storage_root
 
     storage_root()  # storage/projects, storage/archive, storage/tmp
@@ -51,8 +52,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-settings = get_settings()
-origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+cfg = get_settings()
+origins = [o.strip() for o in cfg.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins if origins != ["*"] else ["*"],
@@ -66,7 +67,7 @@ app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(research.router)
 app.include_router(secrets.router)
-app.include_router(settings.router)
+app.include_router(settings_router.router)
 app.include_router(workspace.router)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
