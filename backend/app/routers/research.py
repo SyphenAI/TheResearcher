@@ -173,13 +173,28 @@ def rewrite_text(
     model = None
     error = None
     active = list_active_providers(db, purpose="research")
+    override_provider = (body.provider or "").strip().lower() or None
+    override_model = (body.model or "").strip() or None
 
     want_live = mode in {"live", "auto"}
     if want_live and active:
-        # Prefer first research-enabled token; use its preferred model when set.
+        # Optional picker: same API key, choose Haiku vs Sonnet (etc.).
         item = active[0]
+        if override_provider:
+            match = next((a for a in active if a["provider"] == override_provider), None)
+            if not match:
+                if mode == "live":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"No research-enabled token for provider '{override_provider}'. "
+                            "Add/enable one in Security."
+                        ),
+                    )
+            else:
+                item = match
         provider = item["provider"]
-        preferred = (item.get("model") or "").strip() or None
+        preferred = override_model or (item.get("model") or "").strip() or None
         live = chat(
             db,
             provider=provider,
@@ -370,6 +385,8 @@ def ai_check(
         source_label=body.source_label,
         mode=body.mode,
         max_live=body.max_live,
+        provider=body.provider,
+        model=body.model,
     )
 
 
@@ -413,6 +430,8 @@ def _run_live_ai_panel(
     local_ai_pct: float,
     user: User,
     max_live: int = 3,
+    provider_override: str | None = None,
+    model_override: str | None = None,
 ) -> tuple[list[dict], list[str], list[str]]:
     """Ask up to max_live research-enabled models for a second opinion. Local score stays authoritative."""
     from app.services.llm import chat, list_active_providers
@@ -429,6 +448,19 @@ def _run_live_ai_panel(
         unique.append(item)
         if len(unique) >= max(1, min(int(max_live or 3), 5)):
             break
+
+    # Picker: if user chose provider+model, only run that provider with that model.
+    prov_over = (provider_override or "").strip().lower() or None
+    model_over = (model_override or "").strip() or None
+    if prov_over:
+        match = next((u for u in unique if u["provider"] == prov_over), None)
+        if match:
+            unique = [match]
+        elif active:
+            # Provider has a token but wasn't in unique set
+            match = next((a for a in active if a["provider"] == prov_over), None)
+            if match:
+                unique = [match]
 
     panel: list[dict] = []
     models_used: list[str] = ["local"]
@@ -450,7 +482,9 @@ def _run_live_ai_panel(
 
     for item in unique:
         provider = item["provider"]
-        preferred = (item.get("model") or "").strip() or None
+        preferred = model_over if (model_over and (not prov_over or prov_over == provider)) else (
+            (item.get("model") or "").strip() or None
+        )
         live = chat(
             db,
             provider=provider,
@@ -526,6 +560,8 @@ def _run_ai_check(
     source_label: str,
     mode: str = "quick",
     max_live: int = 3,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> AiCheckOut:
     mode_norm = (mode or "quick").strip().lower()
     if mode_norm not in {"quick", "live"}:
@@ -543,6 +579,8 @@ def _run_ai_check(
             local_ai_pct=float(result["ai_pct"]),
             user=user,
             max_live=max_live,
+            provider_override=provider,
+            model_override=model,
         )
         used_live = any(p.get("ok") for p in live_panel if p.get("provider") != "none")
         if extra_recs:

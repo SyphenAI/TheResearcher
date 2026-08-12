@@ -222,6 +222,94 @@ def list_citations(
     )
 
 
+@router.get("/live-models")
+def list_live_models(
+    purpose: str = "research",
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Model picker options for Live humanize / Live panel (one key, many models)."""
+    from app.models import ApiToken
+    from app.routers.secrets import SUGGESTED_MODELS
+    from app.security import decrypt_secret
+    from app.services.llm import PROVIDER_DEFAULTS, _discover_anthropic_models, list_active_providers
+
+    purpose_n = (purpose or "research").strip().lower()
+    if purpose_n not in {"research", "judge", "any"}:
+        purpose_n = "research"
+    active = list_active_providers(db, purpose=purpose_n)
+
+    options: list[dict] = [
+        {
+            "id": "auto",
+            "label": "Auto (token preferred / fallback)",
+            "provider": None,
+            "model": None,
+        }
+    ]
+    seen: set[str] = set()
+
+    def _add(provider: str, model: str, *, mark_preferred: bool = False) -> None:
+        model_id = (model or "").strip()
+        prov = (provider or "").strip().lower()
+        if not prov or not model_id:
+            return
+        oid = f"{prov}:{model_id}"
+        if oid in seen:
+            return
+        seen.add(oid)
+        label = f"{prov} · {model_id}"
+        if mark_preferred:
+            label += " (preferred)"
+        options.append(
+            {
+                "id": oid,
+                "label": label,
+                "provider": prov,
+                "model": model_id,
+            }
+        )
+
+    seen_prov: set[str] = set()
+    for item in active:
+        prov = item["provider"]
+        preferred = (item.get("model") or "").strip()
+        if preferred:
+            _add(prov, preferred, mark_preferred=True)
+        if prov in seen_prov:
+            continue
+        seen_prov.add(prov)
+        for m in SUGGESTED_MODELS.get(prov, []):
+            _add(prov, m, mark_preferred=(m == preferred))
+        if prov == "anthropic":
+            try:
+                row = (
+                    db.query(ApiToken)
+                    .filter(ApiToken.provider == "anthropic", ApiToken.is_active.is_(True))
+                    .order_by(ApiToken.label.asc())
+                    .first()
+                )
+                if row:
+                    key = decrypt_secret(row.encrypted_value)
+                    base = PROVIDER_DEFAULTS.get("anthropic", {}).get(
+                        "base_url", "https://api.anthropic.com/v1"
+                    )
+                    for mid in _discover_anthropic_models(key, base)[:12]:
+                        _add(prov, mid, mark_preferred=(mid == preferred))
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {
+        "purpose": purpose_n,
+        "options": options,
+        "providers": sorted(seen_prov),
+        "note": (
+            "Pick a model for Live humanize / Live panel. Same API key can use Haiku or Sonnet; "
+            "you do not need multiple tokens per provider."
+        ),
+    }
+
+
 @router.get("/scholar/search")
 def scholar_search(
     q: str = "",

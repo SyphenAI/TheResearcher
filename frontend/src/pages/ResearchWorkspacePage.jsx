@@ -52,6 +52,10 @@ export default function ResearchWorkspacePage() {
   const [scholarQ, setScholarQ] = useState("");
   const [scholarHits, setScholarHits] = useState([]);
   const [scholarNote, setScholarNote] = useState("");
+  const [liveModelOptions, setLiveModelOptions] = useState([
+    { id: "auto", label: "Auto (token preferred / fallback)", provider: null, model: null },
+  ]);
+  const [liveModelId, setLiveModelId] = useState("auto");
   const humanizeRef = useRef(null);
   const autosaveTimer = useRef(null);
   const saveToastTimer = useRef(null);
@@ -106,8 +110,19 @@ export default function ResearchWorkspacePage() {
       loadProjectDetails(),
       api("/api/workspace/providers").then((p) => setProviders(p.active || [])),
       api("/api/workspace/frameworks").then(setFrameworks),
+      api("/api/workspace/live-models?purpose=research")
+        .then((data) => {
+          if (data.options?.length) setLiveModelOptions(data.options);
+        })
+        .catch(() => {}),
     ]).catch((e) => setError(e.message));
   }, [activeId]);
+
+  function liveModelPayload() {
+    const sel = liveModelOptions.find((o) => o.id === liveModelId) || liveModelOptions[0];
+    if (!sel || sel.id === "auto" || !sel.provider) return {};
+    return { provider: sel.provider, model: sel.model || null };
+  }
 
   useEffect(() => {
     if (activeSection) setPrompt(activeSection.prompt || "");
@@ -281,7 +296,12 @@ export default function ResearchWorkspacePage() {
       });
       const result = await api("/api/research/rewrite", {
         method: "POST",
-        body: JSON.stringify({ text: original, strength: "high", mode: rewriteMode }),
+        body: JSON.stringify({
+          text: original,
+          strength: "high",
+          mode: rewriteMode,
+          ...(rewriteMode === "live" ? liveModelPayload() : {}),
+        }),
       });
       const proposed = result.content || "";
       if (!proposed.trim()) {
@@ -892,6 +912,20 @@ export default function ResearchWorkspacePage() {
                     <button className="btn" onClick={applyAssistant} disabled={!assistantOut || busy}>
                       Apply to paper
                     </button>
+                    <label style={{ minWidth: 220 }}>
+                      Live model
+                      <select
+                        value={liveModelId}
+                        onChange={(e) => setLiveModelId(e.target.value)}
+                        disabled={busy}
+                      >
+                        {liveModelOptions.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <button
                       className="btn"
                       onClick={() => humanizeSection("local")}
@@ -904,7 +938,7 @@ export default function ResearchWorkspacePage() {
                       className="btn"
                       onClick={() => humanizeSection("live")}
                       disabled={busy || !activeSection}
-                      title="Live research model rewrite, then review before save"
+                      title="Live rewrite with selected model (same API key)"
                     >
                       Live humanize
                     </button>

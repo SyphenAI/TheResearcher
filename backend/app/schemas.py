@@ -246,6 +246,9 @@ class AiCheckRequest(BaseModel):
     # quick = local heuristic only; live = local + up to max_live research models
     mode: str = "quick"
     max_live: int = Field(default=3, ge=1, le=5)
+    # Optional override for live panel (one key, pick Haiku vs Sonnet, etc.)
+    provider: str | None = None
+    model: str | None = None
 
 
 class AiCheckOut(BaseModel):
@@ -312,6 +315,9 @@ class RewriteRequest(BaseModel):
     strength: str = "medium"
     # local = rules only; live = require research model; auto = live if available else local
     mode: str = "auto"
+    # Optional live model picker (same API key, different model id)
+    provider: str | None = None
+    model: str | None = None
 
 
 class SummarizeRequest(BaseModel):
@@ -321,6 +327,8 @@ class SummarizeRequest(BaseModel):
     url: str = ""
     mode: str = "auto"  # local | live | auto
     title: str = ""
+    provider: str | None = None
+    model: str | None = None
 
 
 class ExportRequest(BaseModel):

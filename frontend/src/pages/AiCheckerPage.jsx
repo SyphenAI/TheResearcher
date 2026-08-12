@@ -42,6 +42,10 @@ export default function AiCheckerPage() {
   const [projects, setProjects] = useState([]);
   const [artifactProjectId, setArtifactProjectId] = useState("");
   const [keptVersion, setKeptVersion] = useState(null); // "humanized" | "original" | null
+  const [liveModelOptions, setLiveModelOptions] = useState([
+    { id: "auto", label: "Auto (token preferred / fallback)", provider: null, model: null },
+  ]);
+  const [liveModelId, setLiveModelId] = useState("auto");
   const fileRef = useRef(null);
   const compareRef = useRef(null);
   const editorRef = useRef(null);
@@ -101,7 +105,23 @@ export default function AiCheckerPage() {
         }
       })
       .catch(() => {});
+    api("/api/workspace/live-models?purpose=research")
+      .then((data) => {
+        const opts = data.options || [];
+        if (opts.length) setLiveModelOptions(opts);
+      })
+      .catch(() => {});
   }, []);
+
+  function selectedLiveModel() {
+    return liveModelOptions.find((o) => o.id === liveModelId) || liveModelOptions[0] || { id: "auto" };
+  }
+
+  function liveModelPayload() {
+    const sel = selectedLiveModel();
+    if (!sel || sel.id === "auto" || !sel.provider) return {};
+    return { provider: sel.provider, model: sel.model || null };
+  }
 
   useEffect(() => {
     if (compare && compareRef.current) {
@@ -127,6 +147,7 @@ export default function AiCheckerPage() {
           source_label: sourceName ? `text:${sourceName}` : "dashboard-paste",
           mode: isLive ? "live" : "quick",
           max_live: 3,
+          ...(isLive ? liveModelPayload() : {}),
         }),
       });
       setResult(res);
@@ -178,7 +199,12 @@ export default function AiCheckerPage() {
       setBusyLabel(rewriteMode === "live" ? "Live model rewrite…" : "Local rules rewrite…");
       const rewritten = await api("/api/research/rewrite", {
         method: "POST",
-        body: JSON.stringify({ text: original, strength: "high", mode: rewriteMode }),
+        body: JSON.stringify({
+          text: original,
+          strength: "high",
+          mode: rewriteMode,
+          ...(rewriteMode === "live" ? liveModelPayload() : {}),
+        }),
       });
       const humanized = rewritten.content || "";
       if (!humanized.trim()) {
@@ -581,6 +607,20 @@ export default function AiCheckerPage() {
           />
         </label>
         <div className="row">
+          <label style={{ minWidth: 260 }}>
+            Live model (one key, pick Haiku/Sonnet/…)
+            <select
+              value={liveModelId}
+              onChange={(e) => setLiveModelId(e.target.value)}
+              disabled={busy}
+            >
+              {liveModelOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             className="btn primary"
             onClick={() => runCheck("quick")}
@@ -593,7 +633,7 @@ export default function AiCheckerPage() {
             className="btn"
             onClick={() => runCheck("live")}
             disabled={busy || !text.trim()}
-            title="Local score plus up to 3 research-enabled models"
+            title="Local score plus live model(s); picker limits to one model when not Auto"
           >
             {busy && busyLabel.includes("Live") ? busyLabel : "1b. Live panel"}
           </button>
@@ -611,7 +651,7 @@ export default function AiCheckerPage() {
             className="btn"
             onClick={() => humanizeThenCheck("live")}
             disabled={busy || !text.trim()}
-            title="Live research model rewrite (uses tokens)"
+            title="Live research model rewrite using the model picker"
           >
             {busy && (busyLabel.includes("Live human") || busyLabel.includes("Live model"))
               ? busyLabel
@@ -619,8 +659,8 @@ export default function AiCheckerPage() {
           </button>
         </div>
         <p className="footer-note" style={{ margin: 0 }}>
-          Live panel / live humanize use Security tokens with Research on. Preferred model on each token
-          is used when set (prefer Haiku/mini for cost).
+          Live model picker uses your research-enabled token for that provider. Same API key can run
+          Haiku or Sonnet — no need for multiple Anthropic rows. Auto = token preferred + fallbacks.
         </p>
       </div>
 
