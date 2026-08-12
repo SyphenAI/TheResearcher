@@ -12,6 +12,7 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 | B02 | Dockerize app (Dockerfile + compose, port 50080) | completed | Image `theresearcher:pre-prod` |
 | B03 | Auth (researcher/password, force change, users) | completed | Admin role can create users |
 | B04 | Research dashboard shell (projects, sections, paper) | completed | Left prompt / right markdown |
+| B11 | Primary home dashboard vs research workspace split | completed | Home = metrics/list/start; open project = desk |
 | B05 | Security tab + encrypted tokens + kill switch | completed | Local SQLite encrypted values |
 | B06 | AI checker tab + contribution metrics | completed | Heuristic local checker |
 | B07 | Judge + humanize + docx export | completed | Local offline implementations |

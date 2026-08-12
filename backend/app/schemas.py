@@ -62,6 +62,12 @@ class ProjectOut(BaseModel):
     human_contribution_pct: float
     created_at: datetime
     updated_at: datetime
+    section_count: int = 0
+    sections_with_content: int = 0
+    task_count: int = 0
+    tasks_done: int = 0
+    artifact_count: int = 0
+    progress_pct: float = 0.0
 
     model_config = {"from_attributes": True}
 

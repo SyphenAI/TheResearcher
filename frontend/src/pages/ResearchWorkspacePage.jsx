@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
 
-export default function DashboardPage() {
-  const [projects, setProjects] = useState([]);
-  const [activeId, setActiveId] = useState(null);
+export default function ResearchWorkspacePage() {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const activeId = Number(projectId);
+
+  const [project, setProject] = useState(null);
   const [sections, setSections] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
@@ -13,88 +17,60 @@ export default function DashboardPage() {
   const [judgeOut, setJudgeOut] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [newProjectTitle, setNewProjectTitle] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const activeProject = useMemo(
-    () => projects.find((p) => p.id === activeId) || null,
-    [projects, activeId]
-  );
   const activeSection = useMemo(
     () => sections.find((s) => s.id === sectionId) || null,
     [sections, sectionId]
   );
 
-  async function loadProjects() {
-    const data = await api("/api/projects");
-    setProjects(data);
-    if (!activeId && data.length) setActiveId(data[0].id);
+  async function loadProject() {
+    if (!activeId) return;
+    const p = await api(`/api/projects/${activeId}`);
+    setProject(p);
   }
 
-  async function loadProjectDetails(projectId) {
-    if (!projectId) return;
+  async function loadProjectDetails() {
+    if (!activeId) return;
     const [secs, tks, arts] = await Promise.all([
-      api(`/api/projects/${projectId}/sections`),
-      api(`/api/projects/${projectId}/tasks`),
-      api(`/api/projects/${projectId}/artifacts`),
+      api(`/api/projects/${activeId}/sections`),
+      api(`/api/projects/${activeId}/tasks`),
+      api(`/api/projects/${activeId}/artifacts`),
     ]);
     setSections(secs);
     setTasks(tks);
     setArtifacts(arts);
     if (secs.length) {
-      const still = secs.find((s) => s.id === sectionId);
-      setSectionId(still ? still.id : secs[0].id);
-      if (!still) setPrompt(secs[0].prompt || "");
+      setSectionId((current) => {
+        const still = secs.find((s) => s.id === current);
+        return still ? still.id : secs[0].id;
+      });
     } else {
       setSectionId(null);
     }
   }
 
   useEffect(() => {
-    loadProjects().catch((e) => setError(e.message));
-  }, []);
-
-  useEffect(() => {
-    if (activeId) {
-      loadProjectDetails(activeId).catch((e) => setError(e.message));
+    if (!activeId) {
+      setError("Missing project id");
+      return;
     }
+    Promise.all([loadProject(), loadProjectDetails()]).catch((e) => setError(e.message));
   }, [activeId]);
 
   useEffect(() => {
     if (activeSection) setPrompt(activeSection.prompt || "");
   }, [sectionId]);
 
-  async function createProject() {
-    if (!newProjectTitle.trim()) return;
-    setBusy(true);
-    try {
-      const p = await api("/api/projects", {
-        method: "POST",
-        body: JSON.stringify({ title: newProjectTitle.trim(), description: "" }),
-      });
-      setNewProjectTitle("");
-      await loadProjects();
-      setActiveId(p.id);
-      setMessage("Project created.");
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function saveSectionContent(content_md) {
-    if (!activeProject || !activeSection) return;
-    const updated = await api(
-      `/api/projects/${activeProject.id}/sections/${activeSection.id}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ content_md, prompt }),
-      }
-    );
+    if (!project || !activeSection) return;
+    const updated = await api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ content_md, prompt }),
+    });
     setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-    await loadProjects();
+    await loadProject();
   }
 
   async function runAssistant() {
@@ -103,7 +79,7 @@ export default function DashboardPage() {
     setError("");
     try {
       if (activeSection) {
-        await api(`/api/projects/${activeProject.id}/sections/${activeSection.id}`, {
+        await api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
           method: "PATCH",
           body: JSON.stringify({ prompt }),
         });
@@ -119,8 +95,8 @@ export default function DashboardPage() {
       });
       setAssistantOut(result.content);
       setMessage(result.notes || "Assistant draft ready.");
-      await loadProjects();
-      await loadProjectDetails(activeId);
+      await loadProject();
+      await loadProjectDetails();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -142,8 +118,8 @@ export default function DashboardPage() {
       });
       setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setMessage("Assistant output applied to the paper (counted as agent contribution).");
-      await loadProjects();
-      await loadProjectDetails(activeId);
+      await loadProject();
+      await loadProjectDetails();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -161,7 +137,7 @@ export default function DashboardPage() {
       });
       await saveSectionContent(result.content);
       setMessage("Section rewritten toward a more human voice. Edit further before publish.");
-      await loadProjectDetails(activeId);
+      await loadProjectDetails();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -190,19 +166,17 @@ export default function DashboardPage() {
   }
 
   async function exportDocx() {
-    if (!activeProject) return;
-    const combined = sections
-      .map((s) => s.content_md)
-      .join("\n\n---\n\n");
+    if (!project) return;
+    const combined = sections.map((s) => s.content_md).join("\n\n---\n\n");
     const res = await api("/api/research/export/docx", {
       method: "POST",
-      body: JSON.stringify({ title: activeProject.title, content_md: combined }),
+      body: JSON.stringify({ title: project.title, content_md: combined }),
     });
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${activeProject.title.replace(/\s+/g, "_")}.docx`;
+    a.download = `${project.title.replace(/\s+/g, "_")}.docx`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -214,7 +188,8 @@ export default function DashboardPage() {
       body: JSON.stringify({ title: taskTitle.trim() }),
     });
     setTaskTitle("");
-    await loadProjectDetails(activeId);
+    await loadProjectDetails();
+    await loadProject();
   }
 
   async function uploadArtifact(e) {
@@ -226,28 +201,43 @@ export default function DashboardPage() {
       method: "POST",
       body: form,
     });
-    await loadProjectDetails(activeId);
+    await loadProjectDetails();
+    await loadProject();
     setMessage(`Uploaded ${file.name}`);
+  }
+
+  async function markStatus(status) {
+    if (!project) return;
+    const updated = await api(`/api/projects/${project.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+    setProject(updated);
+    setMessage(`Status set to ${status}.`);
+  }
+
+  if (!project && !error) {
+    return <div className="muted">Loading research workspace…</div>;
   }
 
   return (
     <div className="stack">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div>
-          <h1 style={{ marginBottom: 0 }}>Research desk</h1>
+          <button className="btn ghost" type="button" onClick={() => navigate("/app")}>
+            ← Back to dashboard
+          </button>
+          <h1 style={{ margin: "0.5rem 0 0" }}>{project?.title || "Research desk"}</h1>
           <p className="muted" style={{ margin: "0.25rem 0 0" }}>
             Left prompt plane, right live paper. Keep final agent share under 10%.
           </p>
         </div>
         <div className="row">
-          <input
-            style={{ width: 220 }}
-            placeholder="New project title"
-            value={newProjectTitle}
-            onChange={(e) => setNewProjectTitle(e.target.value)}
-          />
-          <button className="btn primary" onClick={createProject} disabled={busy}>
-            New project
+          <button className="btn" type="button" onClick={() => markStatus("active")}>
+            Mark active
+          </button>
+          <button className="btn" type="button" onClick={() => markStatus("completed")}>
+            Mark completed
           </button>
         </div>
       </div>
@@ -255,34 +245,44 @@ export default function DashboardPage() {
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
 
-      <div className="tabs">
-        {projects.map((p) => (
-          <button
-            key={p.id}
-            className={`tab ${p.id === activeId ? "active" : ""}`}
-            onClick={() => setActiveId(p.id)}
-          >
-            {p.title}
-          </button>
-        ))}
-      </div>
-
-      {activeProject && (
+      {project && (
         <>
           <div className="grid-3">
             <div className="metric">
+              <span className="muted">Progress</span>
+              <strong>{project.progress_pct ?? 0}%</strong>
+              <div className="progress-track" style={{ marginTop: "0.55rem" }}>
+                <div
+                  className="progress-fill"
+                  style={{ width: `${Math.min(100, Math.max(0, project.progress_pct || 0))}%` }}
+                />
+              </div>
+            </div>
+            <div className="metric">
               <span className="muted">Agent contribution</span>
-              <strong className={activeProject.agent_contribution_pct >= 10 ? "badge bad" : ""}>
-                {activeProject.agent_contribution_pct}%
+              <strong className={project.agent_contribution_pct >= 10 ? "badge bad" : ""}>
+                {project.agent_contribution_pct}%
               </strong>
             </div>
             <div className="metric">
               <span className="muted">Human contribution</span>
-              <strong>{activeProject.human_contribution_pct}%</strong>
+              <strong>{project.human_contribution_pct}%</strong>
+            </div>
+            <div className="metric">
+              <span className="muted">Sections drafted</span>
+              <strong>
+                {project.sections_with_content}/{project.section_count}
+              </strong>
+            </div>
+            <div className="metric">
+              <span className="muted">Tasks done</span>
+              <strong>
+                {project.tasks_done}/{project.task_count}
+              </strong>
             </div>
             <div className="metric">
               <span className="muted">Status</span>
-              <strong style={{ fontSize: "1rem" }}>{activeProject.status}</strong>
+              <strong style={{ fontSize: "1rem" }}>{project.status}</strong>
             </div>
           </div>
 

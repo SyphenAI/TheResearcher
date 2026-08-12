@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
@@ -29,6 +31,58 @@ def _get_project(db: Session, project_id: int) -> Project:
     return project
 
 
+def _section_has_content(content_md: str, title: str) -> bool:
+    text = content_md or ""
+    text = re.sub(rf"^#+\s*{re.escape(title)}\s*", "", text, flags=re.IGNORECASE | re.MULTILINE)
+    text = re.sub(r"_Start drafting here\._", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[#>*_\-\s]", "", text)
+    return len(text) >= 40
+
+
+def _serialize_project(db: Session, project: Project) -> ProjectOut:
+    sections = (
+        db.query(ResearchSection).filter(ResearchSection.project_id == project.id).all()
+    )
+    tasks = db.query(ResearchTask).filter(ResearchTask.project_id == project.id).all()
+    artifacts = db.query(Artifact).filter(Artifact.project_id == project.id).count()
+
+    section_count = len(sections)
+    sections_with_content = sum(
+        1 for s in sections if _section_has_content(s.content_md, s.title)
+    )
+    task_count = len(tasks)
+    tasks_done = sum(1 for t in tasks if t.status.lower() in {"done", "completed"})
+
+    if project.status.lower() in {"completed", "done", "archived"}:
+        progress = 100.0
+    elif section_count == 0 and task_count == 0:
+        progress = 0.0
+    elif task_count == 0:
+        progress = 100.0 * sections_with_content / max(section_count, 1)
+    else:
+        section_part = 100.0 * sections_with_content / max(section_count, 1)
+        task_part = 100.0 * tasks_done / max(task_count, 1)
+        progress = (0.65 * section_part) + (0.35 * task_part)
+
+    return ProjectOut(
+        id=project.id,
+        title=project.title,
+        description=project.description,
+        status=project.status,
+        owner_id=project.owner_id,
+        agent_contribution_pct=project.agent_contribution_pct,
+        human_contribution_pct=project.human_contribution_pct,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+        section_count=section_count,
+        sections_with_content=sections_with_content,
+        task_count=task_count,
+        tasks_done=tasks_done,
+        artifact_count=artifacts,
+        progress_pct=round(min(100.0, max(0.0, progress)), 1),
+    )
+
+
 def _recalc_contributions(db: Session, project: Project) -> None:
     sections = (
         db.query(ResearchSection).filter(ResearchSection.project_id == project.id).all()
@@ -48,8 +102,9 @@ def _recalc_contributions(db: Session, project: Project) -> None:
 def list_projects(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
-) -> list[Project]:
-    return db.query(Project).order_by(Project.updated_at.desc()).all()
+) -> list[ProjectOut]:
+    rows = db.query(Project).order_by(Project.updated_at.desc()).all()
+    return [_serialize_project(db, p) for p in rows]
 
 
 @router.post("", response_model=ProjectOut, status_code=201)
@@ -57,7 +112,7 @@ def create_project(
     body: ProjectCreate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Project:
+) -> ProjectOut:
     project = Project(
         title=body.title,
         description=body.description,
@@ -79,7 +134,7 @@ def create_project(
         )
     db.commit()
     db.refresh(project)
-    return project
+    return _serialize_project(db, project)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -87,8 +142,8 @@ def get_project(
     project_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
-) -> Project:
-    return _get_project(db, project_id)
+) -> ProjectOut:
+    return _serialize_project(db, _get_project(db, project_id))
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)
@@ -97,13 +152,13 @@ def update_project(
     body: ProjectUpdate,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
-) -> Project:
+) -> ProjectOut:
     project = _get_project(db, project_id)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(project, field, value)
     db.commit()
     db.refresh(project)
-    return project
+    return _serialize_project(db, project)
 
 
 @router.delete("/{project_id}", status_code=204)
