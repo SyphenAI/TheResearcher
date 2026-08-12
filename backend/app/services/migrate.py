@@ -43,6 +43,10 @@ def ensure_schema(engine: Engine) -> None:
             token_alters.append(
                 "ALTER TABLE api_tokens ADD COLUMN use_for_judge BOOLEAN DEFAULT 1"
             )
+        if "model" not in token_cols:
+            token_alters.append(
+                "ALTER TABLE api_tokens ADD COLUMN model VARCHAR(128) DEFAULT ''"
+            )
         with engine.begin() as conn:
             for stmt in token_alters:
                 conn.execute(text(stmt))

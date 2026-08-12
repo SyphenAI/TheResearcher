@@ -32,10 +32,26 @@ KNOWN_PROVIDERS = [
     "custom",
 ]
 
+# Suggested lower-cost defaults users can pick in the UI.
+SUGGESTED_MODELS = {
+    "openai": ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"],
+    "anthropic": [
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-5-20250929",
+        "claude-sonnet-4-6",
+        "claude-sonnet-5",
+        "claude-opus-4-5-20251101",
+    ],
+    "xai": ["grok-2-latest", "grok-3-mini", "grok-3"],
+    "google": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+    "azure_openai": ["gpt-4o-mini"],
+    "custom": [],
+}
+
 
 @router.get("/providers")
 def list_providers(_: User = Depends(get_current_user)) -> dict:
-    return {"providers": KNOWN_PROVIDERS}
+    return {"providers": KNOWN_PROVIDERS, "suggested_models": SUGGESTED_MODELS}
 
 
 @router.get("/tokens", response_model=list[TokenOut])
@@ -65,11 +81,13 @@ def upsert_token(
         .filter(ApiToken.provider == provider, ApiToken.label == label)
         .first()
     )
+    preferred_model = (body.model or "").strip()
     if row:
         row.encrypted_value = encrypt_secret(body.value.strip())
         row.is_active = body.is_active
         row.use_for_research = body.use_for_research
         row.use_for_judge = body.use_for_judge
+        row.model = preferred_model
     else:
         row = ApiToken(
             provider=provider,
@@ -78,14 +96,16 @@ def upsert_token(
             is_active=body.is_active,
             use_for_research=body.use_for_research,
             use_for_judge=body.use_for_judge,
+            model=preferred_model,
         )
         db.add(row)
 
+    model_bit = f", model {preferred_model}" if preferred_model else ""
     log_security_event(
         db,
         actor=user.username,
         action="token_upsert",
-        detail=f"Saved {provider} token ({label})",
+        detail=f"Saved {provider} token ({label}){model_bit}",
     )
     db.commit()
     db.refresh(row)
@@ -144,12 +164,15 @@ def edit_token(
         row.use_for_research = bool(data["use_for_research"])
     if "use_for_judge" in data and data["use_for_judge"] is not None:
         row.use_for_judge = bool(data["use_for_judge"])
+    if "model" in data and data["model"] is not None:
+        row.model = str(data["model"]).strip()
 
+    model_bit = f", model {row.model}" if row.model else ""
     log_security_event(
         db,
         actor=user.username,
         action="token_edit",
-        detail=f"Updated {row.provider} token ({row.label})",
+        detail=f"Updated {row.provider} token ({row.label}){model_bit}",
     )
     db.commit()
     db.refresh(row)
@@ -407,6 +430,7 @@ def _to_out(row: ApiToken) -> TokenOut:
         id=row.id,
         provider=row.provider,
         label=row.label,
+        model=getattr(row, "model", "") or "",
         is_active=row.is_active,
         use_for_research=bool(getattr(row, "use_for_research", True)),
         use_for_judge=bool(getattr(row, "use_for_judge", True)),

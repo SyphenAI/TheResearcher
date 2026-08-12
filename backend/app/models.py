@@ -148,6 +148,8 @@ class ApiToken(Base):
     provider: Mapped[str] = mapped_column(String(64), index=True)
     label: Mapped[str] = mapped_column(String(128), default="default")
     encrypted_value: Mapped[str] = mapped_column(Text)
+    # Optional preferred model id (e.g. claude-haiku-4-5-20251001, gpt-4o-mini).
+    model: Mapped[str] = mapped_column(String(128), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # When active, these control which workflows may use the model.
     use_for_research: Mapped[bool] = mapped_column(Boolean, default=True)

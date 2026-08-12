@@ -164,6 +164,7 @@ class TokenCreate(BaseModel):
     provider: str
     label: str = "default"
     value: str
+    model: str = ""
     is_active: bool = True
     use_for_research: bool = True
     use_for_judge: bool = True
@@ -173,6 +174,7 @@ class TokenUpdate(BaseModel):
     provider: str | None = None
     label: str | None = None
     value: str | None = None
+    model: str | None = None
     is_active: bool | None = None
     use_for_research: bool | None = None
     use_for_judge: bool | None = None
@@ -182,6 +184,7 @@ class TokenOut(BaseModel):
     id: int
     provider: str
     label: str
+    model: str = ""
     is_active: bool
     use_for_research: bool = True
     use_for_judge: bool = True

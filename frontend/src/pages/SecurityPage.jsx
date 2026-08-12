@@ -6,6 +6,7 @@ const EMPTY_FORM = {
   provider: "openai",
   label: "default",
   value: "",
+  model: "",
   is_active: true,
   use_for_research: true,
   use_for_judge: true,
@@ -15,6 +16,7 @@ export default function SecurityPage() {
   const { user } = useAuth();
   const [tokens, setTokens] = useState([]);
   const [providers, setProviders] = useState([]);
+  const [suggestedModels, setSuggestedModels] = useState({});
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
   const [message, setMessage] = useState("");
@@ -31,6 +33,7 @@ export default function SecurityPage() {
       api("/api/security/tokens"),
     ]);
     setProviders(p.providers || []);
+    setSuggestedModels(p.suggested_models || {});
     setTokens(t);
     if (user?.role === "admin") {
       try {
@@ -68,6 +71,7 @@ export default function SecurityPage() {
       provider: token.provider,
       label: token.label,
       value: "",
+      model: token.model || "",
       is_active: token.is_active,
       use_for_research: token.use_for_research !== false,
       use_for_judge: token.use_for_judge !== false,
@@ -87,6 +91,7 @@ export default function SecurityPage() {
         const body = {
           provider: form.provider,
           label: form.label,
+          model: form.model.trim(),
           is_active: form.is_active,
           use_for_research: form.use_for_research,
           use_for_judge: form.use_for_judge,
@@ -107,6 +112,7 @@ export default function SecurityPage() {
           body: JSON.stringify({
             provider: form.provider,
             label: form.label,
+            model: form.model.trim(),
             value: form.value.trim(),
             is_active: form.is_active,
             use_for_research: form.use_for_research,
@@ -241,6 +247,7 @@ export default function SecurityPage() {
         api("/api/security/tokens"),
       ]);
       setProviders(p.providers || []);
+      setSuggestedModels(p.suggested_models || {});
       setTokens(t);
       if (user?.role === "admin") {
         try {
@@ -323,6 +330,7 @@ export default function SecurityPage() {
   const providerOptions = providers.length
     ? providers
     : ["openai", "anthropic", "google", "xai", "azure_openai", "custom"];
+  const modelSuggestions = suggestedModels[form.provider] || [];
 
   return (
     <div className="stack">
@@ -400,6 +408,28 @@ export default function SecurityPage() {
               />
             </label>
           </div>
+          <label>
+            Preferred model (optional, use cheaper IDs to save tokens)
+            <input
+              list={`models-${form.provider}`}
+              value={form.model}
+              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+              placeholder={
+                modelSuggestions[0]
+                  ? `e.g. ${modelSuggestions[0]}`
+                  : "Leave blank for automatic default"
+              }
+            />
+            <datalist id={`models-${form.provider}`}>
+              {modelSuggestions.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          </label>
+          <p className="footer-note">
+            Tip: Haiku / mini models are cheaper for drafts and tests. Use Sonnet/Opus only when quality
+            matters. Blank preferred model falls back to provider defaults.
+          </p>
           <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
             <input
               type="checkbox"
@@ -459,6 +489,7 @@ export default function SecurityPage() {
             <tr>
               <th>Provider</th>
               <th>Label</th>
+              <th>Model</th>
               <th>Masked</th>
               <th>Active</th>
               <th>Research</th>
@@ -471,6 +502,9 @@ export default function SecurityPage() {
               <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.65 }}>
                 <td>{t.provider}</td>
                 <td>{t.label}</td>
+                <td>
+                  <code>{t.model || "auto"}</code>
+                </td>
                 <td>
                   <code>{t.masked_value}</code>
                 </td>
@@ -517,7 +551,7 @@ export default function SecurityPage() {
             ))}
             {!tokens.length && (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={8} className="muted">
                   No tokens yet. Add them here when you're ready.
                 </td>
               </tr>

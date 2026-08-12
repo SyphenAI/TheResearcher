@@ -142,12 +142,14 @@ def list_active_providers(
     out = []
     for row in rows:
         meta = PROVIDER_DEFAULTS.get(row.provider, {})
+        preferred = (getattr(row, "model", "") or "").strip()
         out.append(
             {
                 "id": row.id,
                 "provider": row.provider,
                 "label": row.label,
-                "default_model": meta.get("default_model", "default"),
+                "model": preferred,
+                "default_model": preferred or meta.get("default_model", "default"),
                 "style": meta.get("style", "openai"),
                 "use_for_research": bool(getattr(row, "use_for_research", True)),
                 "use_for_judge": bool(getattr(row, "use_for_judge", True)),
@@ -226,7 +228,10 @@ def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
         }
 
     style = meta["style"]
-    candidates = _model_candidates(meta, api_key=api_key, provider=provider)
+    preferred = (getattr(token_row, "model", "") or "").strip() or None
+    candidates = _model_candidates(
+        meta, preferred, api_key=api_key, provider=provider
+    )
     started = datetime.now(timezone.utc)
     last_err = ""
     last_model = candidates[0] if candidates else meta.get("default_model", "")
@@ -331,8 +336,11 @@ def chat(
 
     api_key = decrypt_secret(token_row.encrypted_value)
     style = meta["style"]
+    preferred = model or (getattr(token_row, "model", "") or "").strip() or None
     last_err = ""
-    for use_model in _model_candidates(meta, model, api_key=api_key, provider=provider):
+    for use_model in _model_candidates(
+        meta, preferred, api_key=api_key, provider=provider
+    ):
         try:
             if style == "anthropic":
                 content = _anthropic_chat(
