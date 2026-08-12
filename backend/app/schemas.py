@@ -243,6 +243,9 @@ class ApplyAssistantRequest(BaseModel):
 class AiCheckRequest(BaseModel):
     text: str
     source_label: str = "paste"
+    # quick = local heuristic only; live = local + up to max_live research models
+    mode: str = "quick"
+    max_live: int = Field(default=3, ge=1, le=5)
 
 
 class AiCheckOut(BaseModel):
@@ -259,6 +262,10 @@ class AiCheckOut(BaseModel):
     truncated: bool | None = None
     ocr_used: bool | None = None
     ocr_note: str | None = None
+    mode: str = "quick"
+    used_live: bool = False
+    models_used: list[str] = Field(default_factory=list)
+    live_panel: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TextExtractOut(BaseModel):

@@ -240,6 +240,8 @@ def ai_check(
         user=user,
         text=body.text,
         source_label=body.source_label,
+        mode=body.mode,
+        max_live=body.max_live,
     )
 
 
@@ -248,6 +250,7 @@ async def ai_check_upload(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    mode: str = "quick",
 ) -> AiCheckOut:
     data = await file.read()
     try:
@@ -264,6 +267,7 @@ async def ai_check_upload(
         user=user,
         text=extracted["text"],
         source_label=f"upload:{extracted['filename']}",
+        mode=mode,
     )
     result.extracted_text = extracted["text"]
     result.filename = extracted["filename"]
@@ -274,21 +278,160 @@ async def ai_check_upload(
     return result
 
 
+def _run_live_ai_panel(
+    db: Session,
+    *,
+    text: str,
+    local_ai_pct: float,
+    user: User,
+    max_live: int = 3,
+) -> tuple[list[dict], list[str], list[str]]:
+    """Ask up to max_live research-enabled models for a second opinion. Local score stays authoritative."""
+    from app.services.llm import chat, list_active_providers
+
+    active = list_active_providers(db, purpose="research")
+    # One entry per provider (first label wins) so we do not triple-hit the same API.
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for item in active:
+        prov = item["provider"]
+        if prov in seen:
+            continue
+        seen.add(prov)
+        unique.append(item)
+        if len(unique) >= max(1, min(int(max_live or 3), 5)):
+            break
+
+    panel: list[dict] = []
+    models_used: list[str] = ["local"]
+    extra_recs: list[str] = []
+
+    if not unique:
+        panel.append(
+            {
+                "provider": "none",
+                "model": "",
+                "ok": False,
+                "feedback": (
+                    "No research-enabled tokens active. Local quick score only. "
+                    "Add tokens in Security and leave Research on for a live panel."
+                ),
+            }
+        )
+        return panel, models_used, extra_recs
+
+    for item in unique:
+        provider = item["provider"]
+        preferred = (item.get("model") or "").strip() or None
+        live = chat(
+            db,
+            provider=provider,
+            model=preferred,
+            system=(
+                "You are a writing-quality reviewer for security research notes. "
+                "Detect AI-sounding prose and weak analyst voice. Be brief and direct. "
+                "No em dashes, no AI filler. "
+                "Do not invent facts about the topic content."
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Local heuristic AI-likelihood score: {local_ai_pct}% "
+                        f"(0=human, higher=more AI-like).\n\n"
+                        "In under 120 words, answer:\n"
+                        "1) AI-tell signals you notice (or none)\n"
+                        "2) Does this read like a security analyst note? yes/no + why\n"
+                        "3) One rewrite priority\n"
+                        "4) End with: LIVE_AI_RISK: low|medium|high\n\n"
+                        f"TEXT:\n{text[:8000]}"
+                    ),
+                }
+            ],
+            max_tokens=350,
+            temperature=0.2,
+            purpose="ai_check_live",
+            created_by=user.username,
+        )
+        if live.content and not live.error:
+            label = f"{provider}:{live.model}" if live.model else provider
+            models_used.append(label)
+            feedback = live.content.strip()
+            risk = "medium"
+            low = feedback.lower()
+            if "live_ai_risk: low" in low:
+                risk = "low"
+            elif "live_ai_risk: high" in low:
+                risk = "high"
+            panel.append(
+                {
+                    "provider": provider,
+                    "model": live.model or preferred or "default",
+                    "ok": True,
+                    "feedback": feedback[:900],
+                    "live_ai_risk": risk,
+                }
+            )
+            if risk == "high":
+                extra_recs.append(
+                    f"{provider} flags high AI-sounding risk. Humanize and hand-edit before publish."
+                )
+        else:
+            panel.append(
+                {
+                    "provider": provider,
+                    "model": preferred or "default",
+                    "ok": False,
+                    "feedback": (live.error or "unavailable")[:240],
+                    "live_ai_risk": None,
+                }
+            )
+
+    return panel, models_used, extra_recs
+
+
 def _run_ai_check(
     *,
     db: Session,
     user: User,
     text: str,
     source_label: str,
+    mode: str = "quick",
+    max_live: int = 3,
 ) -> AiCheckOut:
+    mode_norm = (mode or "quick").strip().lower()
+    if mode_norm not in {"quick", "live"}:
+        mode_norm = "quick"
+
     result = score_ai_likelihood(text)
+    live_panel: list[dict] = []
+    models_used: list[str] = ["local"]
+    used_live = False
+
+    if mode_norm == "live":
+        live_panel, models_used, extra_recs = _run_live_ai_panel(
+            db,
+            text=text,
+            local_ai_pct=float(result["ai_pct"]),
+            user=user,
+            max_live=max_live,
+        )
+        used_live = any(p.get("ok") for p in live_panel if p.get("provider") != "none")
+        if extra_recs:
+            result["recommendations"] = list(result.get("recommendations") or []) + extra_recs
+
     sample = text[:500]
+    signals = dict(result["signals"] or {})
+    signals["check_mode"] = mode_norm
+    if live_panel:
+        signals["live_panel_count"] = len(live_panel)
+
     row = AiCheckResult(
-        source_label=source_label,
+        source_label=source_label if mode_norm == "quick" else f"{source_label}|live",
         text_sample=sample,
         ai_pct=result["ai_pct"],
         human_pct=result["human_pct"],
-        signals_json=json.dumps(result["signals"]),
+        signals_json=json.dumps(signals),
         created_by=user.username,
     )
     db.add(row)
@@ -299,9 +442,13 @@ def _run_ai_check(
         source_label=row.source_label,
         ai_pct=row.ai_pct,
         human_pct=row.human_pct,
-        signals=result["signals"],
+        signals=signals,
         recommendations=result["recommendations"],
         created_at=row.created_at,
+        mode=mode_norm,
+        used_live=used_live,
+        models_used=models_used,
+        live_panel=live_panel,
     )
 
 

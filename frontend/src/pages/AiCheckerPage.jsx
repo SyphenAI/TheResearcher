@@ -109,9 +109,14 @@ export default function AiCheckerPage() {
     }
   }, [compare]);
 
-  async function runCheck() {
+  async function runCheck(mode = "quick") {
+    if (!text.trim()) {
+      setError("Paste or load text first.");
+      return;
+    }
+    const isLive = mode === "live";
     setBusy(true);
-    setBusyLabel("Checking…");
+    setBusyLabel(isLive ? "Live panel checking…" : "Quick check…");
     setError("");
     setMessage("");
     try {
@@ -120,10 +125,24 @@ export default function AiCheckerPage() {
         body: JSON.stringify({
           text,
           source_label: sourceName ? `text:${sourceName}` : "dashboard-paste",
+          mode: isLive ? "live" : "quick",
+          max_live: 3,
         }),
       });
       setResult(res);
-      setMessage(`AI likelihood ${res.ai_pct}% · human ${res.human_pct}%.`);
+      if (isLive) {
+        const liveOk = (res.live_panel || []).filter((p) => p.ok).length;
+        setMessage(
+          `Live panel done. Local AI likelihood ${res.ai_pct}% · human ${res.human_pct}%. ` +
+            `${liveOk} model(s) responded` +
+            (res.models_used?.length ? ` (${res.models_used.join(", ")})` : "") +
+            "."
+        );
+      } else {
+        setMessage(
+          `Quick check: AI likelihood ${res.ai_pct}% · human ${res.human_pct}%. Local only (no live models).`
+        );
+      }
       await loadHistory();
     } catch (e) {
       setError(e.message);
@@ -461,8 +480,9 @@ export default function AiCheckerPage() {
       <div>
         <h1>AI Checker</h1>
         <p className="muted">
-          Two steps: <strong>Run AI check</strong> scores the text; <strong>Humanize + recheck</strong> drafts a
-          rewrite and shows a red/green side-by-side. Keep or restore, then export or attach to a project.
+          <strong>Quick check</strong> is a free local heuristic. <strong>Live panel</strong> adds up to 3
+          research-enabled models for a second opinion (uses tokens; prefer Haiku/mini).{" "}
+          <strong>Humanize + recheck</strong> drafts a rewrite with red/green compare.
         </p>
       </div>
 
@@ -552,18 +572,36 @@ export default function AiCheckerPage() {
           />
         </label>
         <div className="row">
-          <button className="btn primary" onClick={runCheck} disabled={busy || !text.trim()}>
-            {busy && busyLabel.includes("Check") ? busyLabel : "1. Run AI check"}
+          <button
+            className="btn primary"
+            onClick={() => runCheck("quick")}
+            disabled={busy || !text.trim()}
+            title="Local heuristic only — free and fast"
+          >
+            {busy && busyLabel.includes("Quick") ? busyLabel : "1. Quick check"}
+          </button>
+          <button
+            className="btn"
+            onClick={() => runCheck("live")}
+            disabled={busy || !text.trim()}
+            title="Local score plus up to 3 research-enabled models"
+          >
+            {busy && busyLabel.includes("Live") ? busyLabel : "1b. Live panel"}
           </button>
           <button className="btn" onClick={humanizeThenCheck} disabled={busy || !text.trim()}>
             {busy &&
             (busyLabel.includes("Humaniz") ||
               busyLabel.includes("Rewrit") ||
-              busyLabel.includes("Recheck"))
+              busyLabel.includes("Recheck") ||
+              busyLabel.includes("Applying"))
               ? busyLabel
               : "2. Humanize + recheck"}
           </button>
         </div>
+        <p className="footer-note" style={{ margin: 0 }}>
+          Live panel uses Security tokens with Research enabled (one call per provider, max 3). Preferred
+          model on each token is used when set.
+        </p>
       </div>
 
       {compare && (
@@ -676,7 +714,7 @@ export default function AiCheckerPage() {
       {result && (
         <div className="grid-3">
           <div className="metric">
-            <span className="muted">AI likelihood</span>
+            <span className="muted">AI likelihood (local)</span>
             <strong className={result.ai_pct >= 10 ? "badge bad" : "badge good"}>
               {result.ai_pct}%
             </strong>
@@ -686,11 +724,69 @@ export default function AiCheckerPage() {
             <strong>{result.human_pct}%</strong>
           </div>
           <div className="metric">
-            <span className="muted">Publish bar</span>
+            <span className="muted">Mode / publish bar</span>
             <strong style={{ fontSize: "1rem" }}>
-              {result.ai_pct < 10 ? "Under 10% target" : "Needs more human edit"}
+              {(result.mode || "quick") === "live" ? "Live panel · " : "Quick · "}
+              {result.ai_pct < 10 ? "under 10% target" : "needs more human edit"}
             </strong>
           </div>
+
+          {(result.live_panel || []).length > 0 && (
+            <div className="panel stack" style={{ gridColumn: "1 / -1" }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h3 style={{ margin: 0 }}>Live model panel</h3>
+                <div className="row">
+                  {(result.models_used || []).map((m) => (
+                    <span className="badge" key={m}>
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <p className="muted" style={{ margin: 0 }}>
+                Local score stays the publish bar. Live models give a second opinion only.
+              </p>
+              {(result.live_panel || []).map((p, idx) => (
+                <div key={`${p.provider}-${idx}`} className="panel stack" style={{ padding: "0.65rem" }}>
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <strong>
+                      {p.provider}
+                      {p.model ? ` · ${p.model}` : ""}
+                    </strong>
+                    <div className="row">
+                      {p.live_ai_risk && (
+                        <span
+                          className={
+                            p.live_ai_risk === "high"
+                              ? "badge bad"
+                              : p.live_ai_risk === "low"
+                                ? "badge good"
+                                : "badge"
+                          }
+                        >
+                          risk {p.live_ai_risk}
+                        </span>
+                      )}
+                      <span className={p.ok ? "badge good" : "badge bad"}>
+                        {p.ok ? "ok" : "failed"}
+                      </span>
+                    </div>
+                  </div>
+                  <pre
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      margin: 0,
+                      fontFamily: "var(--mono)",
+                      fontSize: "0.82rem",
+                    }}
+                  >
+                    {p.feedback}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="panel" style={{ gridColumn: "1 / -1" }}>
             <h3>Signals</h3>
             <pre style={{ whiteSpace: "pre-wrap", fontFamily: "var(--mono)", fontSize: "0.85rem" }}>
