@@ -8,10 +8,14 @@ export default function AiCheckerPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("");
   const [formats, setFormats] = useState([]);
   const [formatNotes, setFormatNotes] = useState([]);
   const [sourceName, setSourceName] = useState("");
+  /** Side-by-side original vs humanized after Humanize + recheck */
+  const [compare, setCompare] = useState(null);
   const fileRef = useRef(null);
+  const compareRef = useRef(null);
 
   async function loadHistory() {
     const rows = await api("/api/research/ai-check/history");
@@ -28,8 +32,15 @@ export default function AiCheckerPage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (compare && compareRef.current) {
+      compareRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [compare]);
+
   async function runCheck() {
     setBusy(true);
+    setBusyLabel("Checking…");
     setError("");
     setMessage("");
     try {
@@ -41,42 +52,111 @@ export default function AiCheckerPage() {
         }),
       });
       setResult(res);
+      setMessage(`AI likelihood ${res.ai_pct}% · human ${res.human_pct}%.`);
       await loadHistory();
     } catch (e) {
       setError(e.message);
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
   }
 
   async function humanizeThenCheck() {
+    const original = text;
+    if (!original.trim()) {
+      setError("Paste or load text first.");
+      return;
+    }
+
     setBusy(true);
+    setBusyLabel("Humanizing…");
     setError("");
     setMessage("");
     try {
+      // Baseline score on the current text (even if we already have a result).
+      const before = await api("/api/research/ai-check", {
+        method: "POST",
+        body: JSON.stringify({
+          text: original,
+          source_label: sourceName ? `before-humanize:${sourceName}` : "before-humanize",
+        }),
+      });
+
+      setBusyLabel("Rewriting…");
       const rewritten = await api("/api/research/rewrite", {
         method: "POST",
-        body: JSON.stringify({ text, strength: "high" }),
+        body: JSON.stringify({ text: original, strength: "high" }),
       });
-      setText(rewritten.content);
-      const res = await api("/api/research/ai-check", {
+      const humanized = rewritten.content || "";
+      if (!humanized.trim()) {
+        throw new Error("Rewrite returned empty text.");
+      }
+
+      setBusyLabel("Rechecking…");
+      const after = await api("/api/research/ai-check", {
         method: "POST",
-        body: JSON.stringify({ text: rewritten.content, source_label: "after-humanize" }),
+        body: JSON.stringify({ text: humanized, source_label: "after-humanize" }),
       });
-      setResult(res);
+
+      setText(humanized);
+      setResult(after);
+      setCompare({
+        original,
+        humanized,
+        before,
+        after,
+        provider: rewritten.provider || null,
+        used_live: !!rewritten.used_live,
+        original_len: rewritten.original_len ?? original.length,
+        rewritten_len: rewritten.rewritten_len ?? humanized.length,
+      });
+
+      const delta = Number((before.ai_pct - after.ai_pct).toFixed(1));
+      const via = rewritten.used_live
+        ? `via ${rewritten.provider || "live model"}`
+        : "via local rewrite";
+      const deltaText =
+        delta > 0
+          ? `AI likelihood dropped ${delta} points (${before.ai_pct}% → ${after.ai_pct}%).`
+          : delta < 0
+            ? `AI likelihood rose ${Math.abs(delta)} points (${before.ai_pct}% → ${after.ai_pct}%).`
+            : `AI likelihood unchanged at ${after.ai_pct}%.`;
+      setMessage(`Humanize complete ${via}. ${deltaText} Side-by-side compare is below.`);
       await loadHistory();
     } catch (e) {
-      setError(e.message);
+      setError(e.message || "Humanize + recheck failed.");
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
+  }
+
+  function useHumanized() {
+    if (!compare) return;
+    setText(compare.humanized);
+    setResult(compare.after);
+    setMessage("Editor set to humanized version. Edit further in your own voice before publish.");
+  }
+
+  function restoreOriginal() {
+    if (!compare) return;
+    setText(compare.original);
+    setResult(compare.before);
+    setMessage("Restored original text into the editor.");
+  }
+
+  function clearCompare() {
+    setCompare(null);
   }
 
   async function loadFileIntoEditor(file) {
     if (!file) return;
     setBusy(true);
+    setBusyLabel("Loading file…");
     setError("");
     setMessage("");
+    setCompare(null);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -86,6 +166,7 @@ export default function AiCheckerPage() {
       });
       setText(extracted.text || "");
       setSourceName(extracted.filename || file.name);
+      setResult(null);
       setMessage(
         `Loaded ${extracted.filename} (${extracted.char_count} chars` +
           `${extracted.truncated ? ", truncated" : ""}). Review text, then run AI check.`
@@ -95,14 +176,17 @@ export default function AiCheckerPage() {
       setError(e.message);
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
   }
 
   async function checkFileDirect(file) {
     if (!file) return;
     setBusy(true);
+    setBusyLabel("Checking file…");
     setError("");
     setMessage("");
+    setCompare(null);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -118,7 +202,7 @@ export default function AiCheckerPage() {
       setMessage(
         `Checked ${res.filename || file.name}` +
           `${res.char_count != null ? ` (${res.char_count} chars)` : ""}` +
-          `${res.truncated ? " (truncated for size)" : ""}.`
+          `${res.truncated ? " (truncated for size)" : ""}. AI likelihood ${res.ai_pct}%.`
       );
       await loadHistory();
       if (fileRef.current) fileRef.current.value = "";
@@ -126,13 +210,13 @@ export default function AiCheckerPage() {
       setError(e.message);
     } finally {
       setBusy(false);
+      setBusyLabel("");
     }
   }
 
   function onFileChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Default path: extract into editor so researcher can review before scoring.
     loadFileIntoEditor(file);
   }
 
@@ -140,17 +224,28 @@ export default function AiCheckerPage() {
     ? formats.join(",")
     : ".pdf,.docx,.pptx,.odt,.txt,.md,.csv,.html,.htm,.rtf,.json,.log";
 
+  const scoreDelta =
+    compare && compare.before && compare.after
+      ? Number((compare.before.ai_pct - compare.after.ai_pct).toFixed(1))
+      : null;
+
   return (
     <div className="stack">
       <div>
         <h1>AI Checker</h1>
         <p className="muted">
           Local heuristic scan for AI-like writing. Paste text or upload PDF, Word, and other common formats.
+          Humanize shows a side-by-side original vs rewrite so you can see what changed.
         </p>
       </div>
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
+      {busy && busyLabel && (
+        <div className="alert ok" role="status">
+          {busyLabel}
+        </div>
+      )}
 
       <div className="panel stack">
         <h2 style={{ margin: 0 }}>Upload document</h2>
@@ -207,30 +302,116 @@ export default function AiCheckerPage() {
             Check file now
           </button>
         </div>
-        {sourceName && (
-          <div className="badge">Source: {sourceName}</div>
-        )}
+        {sourceName && <div className="badge">Source: {sourceName}</div>}
       </div>
 
       <div className="panel stack">
         <label>
           Content to evaluate
           <textarea
-            style={{ minHeight: 260 }}
+            style={{ minHeight: 220 }}
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Paste research text here, or upload a document above"
+            disabled={busy}
           />
         </label>
         <div className="row">
           <button className="btn primary" onClick={runCheck} disabled={busy || !text.trim()}>
-            Run AI check
+            {busy && busyLabel.includes("Check") ? busyLabel : "Run AI check"}
           </button>
           <button className="btn" onClick={humanizeThenCheck} disabled={busy || !text.trim()}>
-            Humanize + recheck
+            {busy && (busyLabel.includes("Humaniz") || busyLabel.includes("Rewrit") || busyLabel.includes("Recheck"))
+              ? busyLabel
+              : "Humanize + recheck"}
           </button>
         </div>
       </div>
+
+      {compare && (
+        <div className="panel stack" ref={compareRef}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <h2 style={{ margin: 0 }}>Side-by-side compare</h2>
+            <div className="row">
+              <button className="btn" type="button" onClick={restoreOriginal} disabled={busy}>
+                Restore original
+              </button>
+              <button className="btn primary" type="button" onClick={useHumanized} disabled={busy}>
+                Keep humanized
+              </button>
+              <button className="btn" type="button" onClick={clearCompare} disabled={busy}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+          <p className="muted" style={{ margin: 0 }}>
+            {compare.used_live
+              ? `Rewrite used live model (${compare.provider || "provider"}).`
+              : "Rewrite used local rules only (no live model)."}{" "}
+            Length {compare.original_len} → {compare.rewritten_len} chars.
+          </p>
+
+          <div className="grid-3">
+            <div className="metric">
+              <span className="muted">Before (AI %)</span>
+              <strong className={compare.before.ai_pct >= 10 ? "badge bad" : "badge good"}>
+                {compare.before.ai_pct}%
+              </strong>
+            </div>
+            <div className="metric">
+              <span className="muted">After (AI %)</span>
+              <strong className={compare.after.ai_pct >= 10 ? "badge bad" : "badge good"}>
+                {compare.after.ai_pct}%
+              </strong>
+            </div>
+            <div className="metric">
+              <span className="muted">Delta</span>
+              <strong style={{ fontSize: "1rem" }}>
+                {scoreDelta == null
+                  ? "—"
+                  : scoreDelta > 0
+                    ? `↓ ${scoreDelta} pts (better)`
+                    : scoreDelta < 0
+                      ? `↑ ${Math.abs(scoreDelta)} pts (worse)`
+                      : "No change"}
+              </strong>
+            </div>
+          </div>
+
+          <div className="grid-2 equal">
+            <div className="stack">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong>Original</strong>
+                <span className="muted">{compare.original.length} chars</span>
+              </div>
+              <textarea
+                readOnly
+                value={compare.original}
+                style={{ minHeight: 280, fontFamily: "var(--mono)", fontSize: "0.85rem" }}
+              />
+            </div>
+            <div className="stack">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong>Humanized</strong>
+                <span className="muted">{compare.humanized.length} chars</span>
+              </div>
+              <textarea
+                value={compare.humanized}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setCompare((c) => (c ? { ...c, humanized: next } : c));
+                  setText(next);
+                }}
+                style={{ minHeight: 280, fontFamily: "var(--mono)", fontSize: "0.85rem" }}
+                disabled={busy}
+              />
+              <p className="muted" style={{ margin: 0 }}>
+                Edit the humanized side freely. Edits sync into the main editor.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {result && (
         <div className="grid-3">
