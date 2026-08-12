@@ -153,6 +153,13 @@ class TokenCreate(BaseModel):
     is_active: bool = True
 
 
+class TokenUpdate(BaseModel):
+    provider: str | None = None
+    label: str | None = None
+    value: str | None = None
+    is_active: bool | None = None
+
+
 class TokenOut(BaseModel):
     id: int
     provider: str
@@ -162,6 +169,12 @@ class TokenOut(BaseModel):
     last_used_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class TokenBulkActionResponse(BaseModel):
+    ok: bool
+    affected: int
+    message: str
 
 
 class AssistantRequest(BaseModel):

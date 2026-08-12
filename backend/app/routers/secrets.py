@@ -9,7 +9,13 @@ from app.config import get_settings
 from app.database import get_db
 from app.deps import get_current_user, require_admin
 from app.models import ApiToken, AuditLog, User
-from app.schemas import KillSwitchResponse, TokenCreate, TokenOut
+from app.schemas import (
+    KillSwitchResponse,
+    TokenBulkActionResponse,
+    TokenCreate,
+    TokenOut,
+    TokenUpdate,
+)
 from app.security import decrypt_secret, encrypt_secret, mask_secret
 from app.services.audit import MAX_AUDIT_ROWS, log_security_event
 
@@ -80,6 +86,130 @@ def upsert_token(
     return _to_out(row)
 
 
+@router.patch("/tokens/{token_id}", response_model=TokenOut)
+def edit_token(
+    token_id: int,
+    body: TokenUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenOut:
+    row = db.query(ApiToken).filter(ApiToken.id == token_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    new_provider = row.provider
+    new_label = row.label
+
+    if "provider" in data and data["provider"] is not None:
+        new_provider = data["provider"].strip().lower()
+    if "label" in data and data["label"] is not None:
+        new_label = (data["label"].strip() or "default")
+
+    if new_provider != row.provider or new_label != row.label:
+        clash = (
+            db.query(ApiToken)
+            .filter(
+                ApiToken.provider == new_provider,
+                ApiToken.label == new_label,
+                ApiToken.id != row.id,
+            )
+            .first()
+        )
+        if clash:
+            raise HTTPException(
+                status_code=400,
+                detail="Another token already uses that provider/label",
+            )
+        row.provider = new_provider
+        row.label = new_label
+
+    if "value" in data and data["value"] is not None:
+        value = data["value"].strip()
+        if value:
+            row.encrypted_value = encrypt_secret(value)
+
+    if "is_active" in data and data["is_active"] is not None:
+        row.is_active = bool(data["is_active"])
+
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_edit",
+        detail=f"{row.provider}/{row.label}",
+    )
+    db.commit()
+    db.refresh(row)
+    return _to_out(row)
+
+
+@router.post("/tokens/{token_id}/disable", response_model=TokenOut)
+def disable_token(
+    token_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenOut:
+    return _set_active(db, user, token_id, active=False)
+
+
+@router.post("/tokens/{token_id}/enable", response_model=TokenOut)
+def enable_token(
+    token_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenOut:
+    return _set_active(db, user, token_id, active=True)
+
+
+@router.post("/tokens/disable-all", response_model=TokenBulkActionResponse)
+def disable_all_tokens(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenBulkActionResponse:
+    rows = db.query(ApiToken).filter(ApiToken.is_active.is_(True)).all()
+    for row in rows:
+        row.is_active = False
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_disable_all",
+        detail=f"disabled {len(rows)}",
+    )
+    db.commit()
+    return TokenBulkActionResponse(
+        ok=True,
+        affected=len(rows),
+        message=(
+            f"Disabled {len(rows)} token(s). Values stay stored encrypted and can be re-enabled."
+        ),
+    )
+
+
+@router.post("/tokens/enable-all", response_model=TokenBulkActionResponse)
+def enable_all_tokens(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenBulkActionResponse:
+    rows = db.query(ApiToken).filter(ApiToken.is_active.is_(False)).all()
+    for row in rows:
+        row.is_active = True
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_enable_all",
+        detail=f"enabled {len(rows)}",
+    )
+    db.commit()
+    return TokenBulkActionResponse(
+        ok=True,
+        affected=len(rows),
+        message=f"Re-enabled {len(rows)} token(s).",
+    )
+
+
 @router.delete("/tokens/{token_id}", status_code=204)
 def delete_token(
     token_id: int,
@@ -101,17 +231,18 @@ def delete_token(
     return Response(status_code=204)
 
 
-@router.post("/kill-switch", response_model=KillSwitchResponse)
-def kill_switch(
+@router.post("/global-kill", response_model=KillSwitchResponse)
+@router.post("/kill-switch", response_model=KillSwitchResponse, include_in_schema=False)
+def global_kill(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ) -> KillSwitchResponse:
+    """Permanently remove all stored tokens. Prefer disable for reversible stop."""
     rows = db.query(ApiToken).all()
     count = len(rows)
     for row in rows:
         db.delete(row)
 
-    # Also clear any plaintext env-style secrets file if present inside data dir
     settings = get_settings()
     secrets_file = settings.data_dir / "secrets_backup.json"
     if secrets_file.exists():
@@ -120,14 +251,17 @@ def kill_switch(
     log_security_event(
         db,
         actor=user.username,
-        action="kill_switch",
-        detail=f"cleared {count} tokens",
+        action="global_kill",
+        detail=f"removed {count} tokens",
     )
     db.commit()
     return KillSwitchResponse(
         ok=True,
         removed_tokens=count,
-        message="All stored API tokens and local secret backups were removed.",
+        message=(
+            f"Global Kill removed {count} token(s) and local secret backups permanently. "
+            "This cannot be undone from the app."
+        ),
     )
 
 
@@ -157,6 +291,23 @@ def recent_audit(
             for r in rows
         ],
     }
+
+
+def _set_active(db: Session, user: User, token_id: int, active: bool) -> TokenOut:
+    row = db.query(ApiToken).filter(ApiToken.id == token_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found")
+    row.is_active = active
+    action = "token_enable" if active else "token_disable"
+    log_security_event(
+        db,
+        actor=user.username,
+        action=action,
+        detail=f"{row.provider}/{row.label}",
+    )
+    db.commit()
+    db.refresh(row)
+    return _to_out(row)
 
 
 def _to_out(row: ApiToken) -> TokenOut:
