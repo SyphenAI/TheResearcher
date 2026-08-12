@@ -9,8 +9,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import AuditLog, Project, ResearchSection, User
+from app.models import Project, ResearchSection, User
 from app.security import hash_password
+from app.services.audit import log_security_event
 
 
 REQUIRED_PACKAGES = [
@@ -79,13 +80,7 @@ def ensure_seed_data(db: Session) -> None:
         )
         db.add(admin)
         db.flush()
-        db.add(
-            AuditLog(
-                actor="system",
-                action="seed_admin",
-                detail=f"Created default admin user '{settings.default_admin_username}'",
-            )
-        )
+        log_security_event(db, actor="system", action="seed_admin", detail="default admin")
 
     project_count = db.query(Project).count()
     if project_count == 0 and admin:
@@ -121,13 +116,7 @@ def ensure_seed_data(db: Session) -> None:
                     human_chars=0,
                 )
             )
-        db.add(
-            AuditLog(
-                actor="system",
-                action="seed_project",
-                detail="Created sample research project with default sections",
-            )
-        )
+        log_security_event(db, actor="system", action="seed_project", detail="sample project")
 
     artifacts_dir = settings.data_dir / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -135,11 +124,12 @@ def ensure_seed_data(db: Session) -> None:
 
 
 def log_startup(db: Session, checks: dict[str, Any]) -> None:
-    db.add(
-        AuditLog(
-            actor="system",
-            action="startup_self_check",
-            detail=str(checks),
-        )
+    # Keep startup notes tiny. Full research history is in git, not this table.
+    status = "ok" if checks.get("ok") else "degraded"
+    log_security_event(
+        db,
+        actor="system",
+        action="startup",
+        detail=status,
+        commit=True,
     )
-    db.commit()

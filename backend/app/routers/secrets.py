@@ -11,6 +11,7 @@ from app.deps import get_current_user, require_admin
 from app.models import ApiToken, AuditLog, User
 from app.schemas import KillSwitchResponse, TokenCreate, TokenOut
 from app.security import decrypt_secret, encrypt_secret, mask_secret
+from app.services.audit import MAX_AUDIT_ROWS, log_security_event
 
 router = APIRouter(prefix="/api/security", tags=["security"])
 
@@ -68,12 +69,11 @@ def upsert_token(
         )
         db.add(row)
 
-    db.add(
-        AuditLog(
-            actor=user.username,
-            action="token_upsert",
-            detail=f"provider={provider} label={label}",
-        )
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_upsert",
+        detail=f"{provider}/{label}",
     )
     db.commit()
     db.refresh(row)
@@ -89,13 +89,13 @@ def delete_token(
     row = db.query(ApiToken).filter(ApiToken.id == token_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Token not found")
+    provider = row.provider
     db.delete(row)
-    db.add(
-        AuditLog(
-            actor=user.username,
-            action="token_delete",
-            detail=f"id={token_id} provider={row.provider}",
-        )
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_delete",
+        detail=provider,
     )
     db.commit()
     return Response(status_code=204)
@@ -117,12 +117,11 @@ def kill_switch(
     if secrets_file.exists():
         secrets_file.unlink()
 
-    db.add(
-        AuditLog(
-            actor=user.username,
-            action="kill_switch",
-            detail=f"Removed {count} API tokens and local secret backup",
-        )
+    log_security_event(
+        db,
+        actor=user.username,
+        action="kill_switch",
+        detail=f"cleared {count} tokens",
     )
     db.commit()
     return KillSwitchResponse(
@@ -136,19 +135,28 @@ def kill_switch(
 def recent_audit(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
-    limit: int = 100,
-) -> list[dict]:
-    rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(min(limit, 500)).all()
-    return [
-        {
-            "id": r.id,
-            "actor": r.actor,
-            "action": r.action,
-            "detail": r.detail,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
+    limit: int = 20,
+) -> dict:
+    """Short security event feed only. Research history belongs in git."""
+    cap = min(max(limit, 1), MAX_AUDIT_ROWS)
+    rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(cap).all()
+    return {
+        "note": (
+            "Generic security events only (sign-in, users, tokens). "
+            "Research content and real change history live in git and project data."
+        ),
+        "retention": MAX_AUDIT_ROWS,
+        "events": [
+            {
+                "id": r.id,
+                "actor": r.actor,
+                "action": r.action,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
 
 
 def _to_out(row: ApiToken) -> TokenOut:

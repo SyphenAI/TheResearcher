@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user, require_admin
-from app.models import AuditLog, User
+from app.models import User
 from app.schemas import (
     LoginRequest,
     PasswordChangeRequest,
@@ -15,6 +15,7 @@ from app.schemas import (
     UserOut,
 )
 from app.security import create_access_token, hash_password, verify_password
+from app.services.audit import log_security_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -39,7 +40,7 @@ def _login(username: str, password: str, db: Session) -> TokenResponse:
     if not user.is_active:
         raise HTTPException(status_code=403, detail="User is inactive")
     token = create_access_token(user.username, {"role": user.role})
-    db.add(AuditLog(actor=user.username, action="login", detail="User logged in"))
+    log_security_event(db, actor=user.username, action="login", detail="sign-in")
     db.commit()
     return TokenResponse(access_token=token, must_change_password=user.must_change_password)
 
@@ -64,7 +65,7 @@ def change_password(
 
     user.password_hash = hash_password(body.new_password)
     user.must_change_password = False
-    db.add(AuditLog(actor=user.username, action="password_change", detail="Password updated"))
+    log_security_event(db, actor=user.username, action="password_change", detail="updated")
     db.commit()
     db.refresh(user)
     return user
@@ -97,12 +98,11 @@ def create_user(
         is_active=True,
     )
     db.add(user)
-    db.add(
-        AuditLog(
-            actor=admin.username,
-            action="user_create",
-            detail=f"Created user {body.username} role={role}",
-        )
+    log_security_event(
+        db,
+        actor=admin.username,
+        action="user_create",
+        detail=f"{body.username} ({role})",
     )
     db.commit()
     db.refresh(user)

@@ -14,7 +14,6 @@ from app.deps import get_current_user
 from app.models import (
     AiCheckResult,
     Artifact,
-    AuditLog,
     JudgeResult,
     Project,
     ResearchSection,
@@ -70,14 +69,6 @@ def research_assistant(
                 project.human_contribution_pct = round(100.0 * human / total, 1)
         db.commit()
 
-    db.add(
-        AuditLog(
-            actor=user.username,
-            action="research_assistant",
-            detail=f"mode={body.mode} section_id={body.section_id}",
-        )
-    )
-    db.commit()
     return AssistantResponse(**result)
 
 
@@ -110,13 +101,6 @@ def apply_assistant_output(
             project.agent_contribution_pct = round(100.0 * agent / total, 1)
             project.human_contribution_pct = round(100.0 * human / total, 1)
 
-    db.add(
-        AuditLog(
-            actor=user.username,
-            action="apply_assistant",
-            detail=f"section={body.section_id}",
-        )
-    )
     db.commit()
     db.refresh(section)
     return section
@@ -264,13 +248,6 @@ async def upload_artifact(
         notes="",
     )
     db.add(artifact)
-    db.add(
-        AuditLog(
-            actor=user.username,
-            action="artifact_upload",
-            detail=f"project={project_id} file={artifact.original_name}",
-        )
-    )
     db.commit()
     db.refresh(artifact)
     return artifact

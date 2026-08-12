@@ -12,6 +12,7 @@ export default function SecurityPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [audit, setAudit] = useState([]);
+  const [auditNote, setAuditNote] = useState("");
 
   async function load() {
     const [p, t] = await Promise.all([
@@ -22,10 +23,12 @@ export default function SecurityPage() {
     setTokens(t);
     if (user?.role === "admin") {
       try {
-        const a = await api("/api/security/audit?limit=30");
-        setAudit(a);
+        const a = await api("/api/security/audit?limit=20");
+        setAudit(a.events || []);
+        setAuditNote(a.note || "");
       } catch {
         setAudit([]);
+        setAuditNote("");
       }
     }
   }
@@ -162,8 +165,12 @@ export default function SecurityPage() {
       </div>
 
       {user?.role === "admin" && (
-        <div className="panel">
-          <h2>Recent audit</h2>
+        <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Recent audit</h2>
+          <p className="muted" style={{ margin: 0 }}>
+            {auditNote ||
+              "Generic security events only. Research content and real change history live in git."}
+          </p>
           <table className="table">
             <thead>
               <tr>
@@ -182,6 +189,13 @@ export default function SecurityPage() {
                   <td className="muted">{a.detail}</td>
                 </tr>
               ))}
+              {!audit.length && (
+                <tr>
+                  <td colSpan={4} className="muted">
+                    No security events yet.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
