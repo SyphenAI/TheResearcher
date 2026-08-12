@@ -55,13 +55,19 @@ class LLMResult:
     error: str | None = None
 
 
-def list_active_providers(db: Session) -> list[dict[str, Any]]:
-    rows = (
-        db.query(ApiToken)
-        .filter(ApiToken.is_active.is_(True))
-        .order_by(ApiToken.provider.asc(), ApiToken.label.asc())
-        .all()
-    )
+def list_active_providers(
+    db: Session,
+    *,
+    purpose: str = "research",
+) -> list[dict[str, Any]]:
+    """purpose: research | judge | any"""
+    q = db.query(ApiToken).filter(ApiToken.is_active.is_(True))
+    purpose = (purpose or "research").lower()
+    if purpose == "research":
+        q = q.filter(ApiToken.use_for_research.is_(True))
+    elif purpose == "judge":
+        q = q.filter(ApiToken.use_for_judge.is_(True))
+    rows = q.order_by(ApiToken.provider.asc(), ApiToken.label.asc()).all()
     out = []
     for row in rows:
         meta = PROVIDER_DEFAULTS.get(row.provider, {})
@@ -72,13 +78,32 @@ def list_active_providers(db: Session) -> list[dict[str, Any]]:
                 "label": row.label,
                 "default_model": meta.get("default_model", "default"),
                 "style": meta.get("style", "openai"),
+                "use_for_research": bool(getattr(row, "use_for_research", True)),
+                "use_for_judge": bool(getattr(row, "use_for_judge", True)),
             }
         )
     return out
 
 
-def get_provider_token(db: Session, provider: str, label: str = "default") -> ApiToken | None:
+def get_provider_token(
+    db: Session,
+    provider: str,
+    label: str = "default",
+    *,
+    purpose: str = "any",
+) -> ApiToken | None:
     provider = provider.strip().lower()
+    purpose = (purpose or "any").lower()
+
+    def _purpose_ok(row: ApiToken) -> bool:
+        if not row.is_active:
+            return False
+        if purpose == "research":
+            return bool(getattr(row, "use_for_research", True))
+        if purpose == "judge":
+            return bool(getattr(row, "use_for_judge", True))
+        return True
+
     row = (
         db.query(ApiToken)
         .filter(
@@ -88,15 +113,19 @@ def get_provider_token(db: Session, provider: str, label: str = "default") -> Ap
         )
         .first()
     )
-    if row:
+    if row and _purpose_ok(row):
         return row
-    # fall back to any active label for provider
-    return (
+    # fall back to any active label for provider matching purpose
+    candidates = (
         db.query(ApiToken)
         .filter(ApiToken.provider == provider, ApiToken.is_active.is_(True))
         .order_by(ApiToken.id.asc())
-        .first()
+        .all()
     )
+    for candidate in candidates:
+        if _purpose_ok(candidate):
+            return candidate
+    return None
 
 
 def chat(
@@ -115,8 +144,8 @@ def chat(
     if not meta:
         return LLMResult("", provider, model or "", False, f"Unknown provider: {provider}")
 
-    token_row = get_provider_token(db, provider, label)
-    if not token_row:
+    token_row = get_provider_token(db, provider, label, purpose="any")
+    if not token_row or not token_row.is_active:
         return LLMResult(
             "",
             provider,

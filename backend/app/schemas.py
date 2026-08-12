@@ -165,6 +165,8 @@ class TokenCreate(BaseModel):
     label: str = "default"
     value: str
     is_active: bool = True
+    use_for_research: bool = True
+    use_for_judge: bool = True
 
 
 class TokenUpdate(BaseModel):
@@ -172,6 +174,8 @@ class TokenUpdate(BaseModel):
     label: str | None = None
     value: str | None = None
     is_active: bool | None = None
+    use_for_research: bool | None = None
+    use_for_judge: bool | None = None
 
 
 class TokenOut(BaseModel):
@@ -179,6 +183,8 @@ class TokenOut(BaseModel):
     provider: str
     label: str
     is_active: bool
+    use_for_research: bool = True
+    use_for_judge: bool = True
     masked_value: str
     last_used_at: datetime | None
     created_at: datetime

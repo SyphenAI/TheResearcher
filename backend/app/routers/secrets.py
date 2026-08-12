@@ -17,7 +17,7 @@ from app.schemas import (
     TokenUpdate,
 )
 from app.security import decrypt_secret, encrypt_secret, mask_secret
-from app.services.audit import MAX_AUDIT_ROWS, log_security_event
+from app.services.audit import MAX_AUDIT_ROWS, log_security_event, serialize_audit_row
 
 router = APIRouter(prefix="/api/security", tags=["security"])
 
@@ -66,12 +66,16 @@ def upsert_token(
     if row:
         row.encrypted_value = encrypt_secret(body.value.strip())
         row.is_active = body.is_active
+        row.use_for_research = body.use_for_research
+        row.use_for_judge = body.use_for_judge
     else:
         row = ApiToken(
             provider=provider,
             label=label,
             encrypted_value=encrypt_secret(body.value.strip()),
             is_active=body.is_active,
+            use_for_research=body.use_for_research,
+            use_for_judge=body.use_for_judge,
         )
         db.add(row)
 
@@ -79,7 +83,7 @@ def upsert_token(
         db,
         actor=user.username,
         action="token_upsert",
-        detail=f"{provider}/{label}",
+        detail=f"Saved {provider} token ({label})",
     )
     db.commit()
     db.refresh(row)
@@ -134,12 +138,16 @@ def edit_token(
 
     if "is_active" in data and data["is_active"] is not None:
         row.is_active = bool(data["is_active"])
+    if "use_for_research" in data and data["use_for_research"] is not None:
+        row.use_for_research = bool(data["use_for_research"])
+    if "use_for_judge" in data and data["use_for_judge"] is not None:
+        row.use_for_judge = bool(data["use_for_judge"])
 
     log_security_event(
         db,
         actor=user.username,
         action="token_edit",
-        detail=f"{row.provider}/{row.label}",
+        detail=f"Updated {row.provider} token ({row.label})",
     )
     db.commit()
     db.refresh(row)
@@ -164,6 +172,56 @@ def enable_token(
     return _set_active(db, user, token_id, active=True)
 
 
+@router.post("/tokens/{token_id}/judge", response_model=TokenOut)
+def set_judge_usage(
+    token_id: int,
+    enabled: bool = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenOut:
+    row = db.query(ApiToken).filter(ApiToken.id == token_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found")
+    row.use_for_judge = bool(enabled)
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_judge_on" if enabled else "token_judge_off",
+        detail=(
+            f"{row.provider} ({row.label}) "
+            f"{'included in judge panel' if enabled else 'removed from judge panel'}"
+        ),
+    )
+    db.commit()
+    db.refresh(row)
+    return _to_out(row)
+
+
+@router.post("/tokens/{token_id}/research", response_model=TokenOut)
+def set_research_usage(
+    token_id: int,
+    enabled: bool = True,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> TokenOut:
+    row = db.query(ApiToken).filter(ApiToken.id == token_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found")
+    row.use_for_research = bool(enabled)
+    log_security_event(
+        db,
+        actor=user.username,
+        action="token_research_on" if enabled else "token_research_off",
+        detail=(
+            f"{row.provider} ({row.label}) "
+            f"{'included in research assistant' if enabled else 'removed from research assistant'}"
+        ),
+    )
+    db.commit()
+    db.refresh(row)
+    return _to_out(row)
+
+
 @router.post("/tokens/disable-all", response_model=TokenBulkActionResponse)
 def disable_all_tokens(
     db: Session = Depends(get_db),
@@ -176,7 +234,7 @@ def disable_all_tokens(
         db,
         actor=user.username,
         action="token_disable_all",
-        detail=f"disabled {len(rows)}",
+        detail=f"Disabled {len(rows)} stored token(s). Secrets kept encrypted.",
     )
     db.commit()
     return TokenBulkActionResponse(
@@ -200,7 +258,7 @@ def enable_all_tokens(
         db,
         actor=user.username,
         action="token_enable_all",
-        detail=f"enabled {len(rows)}",
+        detail=f"Re-enabled {len(rows)} stored token(s).",
     )
     db.commit()
     return TokenBulkActionResponse(
@@ -225,7 +283,7 @@ def delete_token(
         db,
         actor=user.username,
         action="token_delete",
-        detail=provider,
+        detail=f"Removed {provider} token permanently",
     )
     db.commit()
     return Response(status_code=204)
@@ -252,7 +310,7 @@ def global_kill(
         db,
         actor=user.username,
         action="global_kill",
-        detail=f"removed {count} tokens",
+        detail=f"Permanently wiped {count} token(s) and local secret backups",
     )
     db.commit()
     return KillSwitchResponse(
@@ -276,20 +334,11 @@ def recent_audit(
     rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(cap).all()
     return {
         "note": (
-            "Generic security events only (sign-in, users, tokens). "
-            "Research content and real change history live in git and project data."
+            "Security and system events only (sign-in, users, tokens, startup). "
+            "Research content changes live in git and project storage."
         ),
         "retention": MAX_AUDIT_ROWS,
-        "events": [
-            {
-                "id": r.id,
-                "actor": r.actor,
-                "action": r.action,
-                "detail": r.detail,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ],
+        "events": [serialize_audit_row(r) for r in rows],
     }
 
 
@@ -303,7 +352,10 @@ def _set_active(db: Session, user: User, token_id: int, active: bool) -> TokenOu
         db,
         actor=user.username,
         action=action,
-        detail=f"{row.provider}/{row.label}",
+        detail=(
+            f"{row.provider} ({row.label}) "
+            f"{'turned on' if active else 'turned off'} for all workflows"
+        ),
     )
     db.commit()
     db.refresh(row)
@@ -322,6 +374,8 @@ def _to_out(row: ApiToken) -> TokenOut:
         provider=row.provider,
         label=row.label,
         is_active=row.is_active,
+        use_for_research=bool(getattr(row, "use_for_research", True)),
+        use_for_judge=bool(getattr(row, "use_for_judge", True)),
         masked_value=masked,
         last_used_at=row.last_used_at,
         created_at=row.created_at,

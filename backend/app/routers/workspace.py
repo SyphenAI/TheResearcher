@@ -75,7 +75,11 @@ def templates(_: User = Depends(get_current_user)) -> dict:
 
 @router.get("/providers")
 def providers(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> dict:
-    return {"active": list_active_providers(db)}
+    return {
+        "active": list_active_providers(db, purpose="any"),
+        "research": list_active_providers(db, purpose="research"),
+        "judge": list_active_providers(db, purpose="judge"),
+    }
 
 
 @router.get("/frameworks")

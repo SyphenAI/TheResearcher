@@ -149,6 +149,9 @@ class ApiToken(Base):
     label: Mapped[str] = mapped_column(String(128), default="default")
     encrypted_value: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # When active, these control which workflows may use the model.
+    use_for_research: Mapped[bool] = mapped_column(Boolean, default=True)
+    use_for_judge: Mapped[bool] = mapped_column(Boolean, default=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -160,7 +160,7 @@ def rewrite_text(
     rewritten = humanize_text(body.text, strength=body.strength)
     used_live = False
     provider = None
-    active = list_active_providers(db)
+    active = list_active_providers(db, purpose="research")
     if active:
         provider = active[0]["provider"]
         live = chat(
@@ -326,7 +326,50 @@ def judge_output(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> JudgeOut:
+    from app.services.llm import chat, list_active_providers
+
+    # Local baseline always runs. Live models only if enabled for judge.
     result = local_judge(body.text, body.criteria)
+    judge_providers = list_active_providers(db, purpose="judge")
+    live_notes: list[str] = []
+    if judge_providers:
+        provider = judge_providers[0]["provider"]
+        criteria = ", ".join(body.criteria or [])
+        live = chat(
+            db,
+            provider=provider,
+            system=(
+                "You are a strict research judge for Security Operations writing. "
+                "Score accuracy, relevance, originality, ethics, and clarity. "
+                "Be direct. No em dashes or AI filler."
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Criteria: {criteria}\n\n"
+                        f"Return short feedback and whether this is publish-ready.\n\n"
+                        f"TEXT:\n{body.text[:10000]}"
+                    ),
+                }
+            ],
+            max_tokens=900,
+        )
+        if live.content and not live.error:
+            result["feedback"] = (
+                f"{result['feedback']} Live judge ({provider}): {live.content[:1200]}"
+            )
+            live_notes.append(provider)
+        elif live.error:
+            result["feedback"] = (
+                f"{result['feedback']} Live judge skipped ({provider}): model unavailable."
+            )
+    else:
+        result["feedback"] = (
+            f"{result['feedback']} No judge-enabled models active in Security. "
+            "Local judge only."
+        )
+
     row = JudgeResult(
         project_id=body.project_id,
         section_id=body.section_id,

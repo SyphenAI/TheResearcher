@@ -7,6 +7,8 @@ const EMPTY_FORM = {
   label: "default",
   value: "",
   is_active: true,
+  use_for_research: true,
+  use_for_judge: true,
 };
 
 export default function SecurityPage() {
@@ -66,6 +68,8 @@ export default function SecurityPage() {
       label: token.label,
       value: "",
       is_active: token.is_active,
+      use_for_research: token.use_for_research !== false,
+      use_for_judge: token.use_for_judge !== false,
     });
     setMessage(`Editing ${token.provider}/${token.label}. Leave secret blank to keep the current value.`);
     setError("");
@@ -83,6 +87,8 @@ export default function SecurityPage() {
           provider: form.provider,
           label: form.label,
           is_active: form.is_active,
+          use_for_research: form.use_for_research,
+          use_for_judge: form.use_for_judge,
         };
         if (form.value.trim()) body.value = form.value.trim();
         await api(`/api/security/tokens/${editingId}`, {
@@ -102,6 +108,8 @@ export default function SecurityPage() {
             label: form.label,
             value: form.value.trim(),
             is_active: form.is_active,
+            use_for_research: form.use_for_research,
+            use_for_judge: form.use_for_judge,
           }),
         });
         setMessage("Token stored encrypted in local data volume.");
@@ -142,6 +150,50 @@ export default function SecurityPage() {
         token.is_active
           ? `Disabled ${token.provider}/${token.label}. Re-enable anytime.`
           : `Re-enabled ${token.provider}/${token.label}.`
+      );
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleJudge(token) {
+    setBusy(true);
+    setError("");
+    try {
+      const enabled = !(token.use_for_judge !== false);
+      await api(
+        `/api/security/tokens/${token.id}/judge?enabled=${enabled ? "true" : "false"}`,
+        { method: "POST" }
+      );
+      setMessage(
+        enabled
+          ? `${token.provider} included in judge panel.`
+          : `${token.provider} removed from judge panel.`
+      );
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleResearch(token) {
+    setBusy(true);
+    setError("");
+    try {
+      const enabled = !(token.use_for_research !== false);
+      await api(
+        `/api/security/tokens/${token.id}/research?enabled=${enabled ? "true" : "false"}`,
+        { method: "POST" }
+      );
+      setMessage(
+        enabled
+          ? `${token.provider} included in research assistant.`
+          : `${token.provider} removed from research assistant.`
       );
       await load();
     } catch (err) {
@@ -211,7 +263,8 @@ export default function SecurityPage() {
       <div>
         <h1>Security</h1>
         <p className="muted">
-          Manage provider API tokens for research agents. Tokens stay local (encrypted at rest in the data volume).
+          Manage provider API tokens. Tokens stay local and encrypted. A model can be active overall, then
+          included or excluded from Research and Judge separately.
         </p>
       </div>
 
@@ -270,8 +323,27 @@ export default function SecurityPage() {
               checked={form.is_active}
               onChange={(e) => setForm((f) => ({ ...f, is_active: e.target.checked }))}
             />
-            <span>Active (unchecked = disabled, reversible kill for this token)</span>
+            <span>Active (master switch; off means unused everywhere)</span>
           </label>
+          <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={form.use_for_research}
+              onChange={(e) => setForm((f) => ({ ...f, use_for_research: e.target.checked }))}
+            />
+            <span>Use for Research Assistant</span>
+          </label>
+          <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={form.use_for_judge}
+              onChange={(e) => setForm((f) => ({ ...f, use_for_judge: e.target.checked }))}
+            />
+            <span>Use for Judge panel</span>
+          </label>
+          <p className="footer-note">
+            Example: keep a model active for research, but turn Judge off if it is not performing well.
+          </p>
           <div className="row">
             <button className="btn primary" type="submit" disabled={busy}>
               {editingId ? "Save edits" : "Save token"}
@@ -305,7 +377,9 @@ export default function SecurityPage() {
               <th>Provider</th>
               <th>Label</th>
               <th>Masked</th>
-              <th>Status</th>
+              <th>Active</th>
+              <th>Research</th>
+              <th>Judge</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -319,7 +393,17 @@ export default function SecurityPage() {
                 </td>
                 <td>
                   <span className={`badge ${t.is_active ? "good" : "bad"}`}>
-                    {t.is_active ? "active" : "disabled"}
+                    {t.is_active ? "on" : "off"}
+                  </span>
+                </td>
+                <td>
+                  <span className={`badge ${t.is_active && t.use_for_research !== false ? "good" : "bad"}`}>
+                    {t.is_active && t.use_for_research !== false ? "on" : "off"}
+                  </span>
+                </td>
+                <td>
+                  <span className={`badge ${t.is_active && t.use_for_judge !== false ? "good" : "bad"}`}>
+                    {t.is_active && t.use_for_judge !== false ? "on" : "off"}
                   </span>
                 </td>
                 <td>
@@ -327,6 +411,12 @@ export default function SecurityPage() {
                     <div className="row">
                       <button className="btn ghost" type="button" disabled={busy} onClick={() => startEdit(t)}>
                         Edit
+                      </button>
+                      <button className="btn ghost" type="button" disabled={busy || !t.is_active} onClick={() => toggleResearch(t)}>
+                        {t.use_for_research !== false ? "Research off" : "Research on"}
+                      </button>
+                      <button className="btn ghost" type="button" disabled={busy || !t.is_active} onClick={() => toggleJudge(t)}>
+                        {t.use_for_judge !== false ? "Judge off" : "Judge on"}
                       </button>
                       <button className="btn ghost" type="button" disabled={busy} onClick={() => toggleToken(t)}>
                         {t.is_active ? "Disable" : "Enable"}
@@ -341,7 +431,7 @@ export default function SecurityPage() {
             ))}
             {!tokens.length && (
               <tr>
-                <td colSpan={5} className="muted">
+                <td colSpan={7} className="muted">
                   No tokens yet. Add them here when you're ready.
                 </td>
               </tr>
@@ -415,14 +505,14 @@ export default function SecurityPage() {
           <h2 style={{ margin: 0 }}>Recent audit</h2>
           <p className="muted" style={{ margin: 0 }}>
             {auditNote ||
-              "Generic security events only. Research content and real change history live in git."}
+              "Security and system events only. Research content changes live in git and project storage."}
           </p>
           <table className="table">
             <thead>
               <tr>
                 <th>When</th>
                 <th>Actor</th>
-                <th>Action</th>
+                <th>What happened</th>
                 <th>Detail</th>
               </tr>
             </thead>
@@ -431,7 +521,7 @@ export default function SecurityPage() {
                 <tr key={a.id}>
                   <td>{a.created_at}</td>
                   <td>{a.actor}</td>
-                  <td>{a.action}</td>
+                  <td>{a.action_label || a.action}</td>
                   <td className="muted">{a.detail}</td>
                 </tr>
               ))}

@@ -31,3 +31,18 @@ def ensure_schema(engine: Engine) -> None:
         with engine.begin() as conn:
             for stmt in alters:
                 conn.execute(text(stmt))
+
+    if "api_tokens" in inspector.get_table_names():
+        token_cols = {c["name"] for c in inspector.get_columns("api_tokens")}
+        token_alters = []
+        if "use_for_research" not in token_cols:
+            token_alters.append(
+                "ALTER TABLE api_tokens ADD COLUMN use_for_research BOOLEAN DEFAULT 1"
+            )
+        if "use_for_judge" not in token_cols:
+            token_alters.append(
+                "ALTER TABLE api_tokens ADD COLUMN use_for_judge BOOLEAN DEFAULT 1"
+            )
+        with engine.begin() as conn:
+            for stmt in token_alters:
+                conn.execute(text(stmt))

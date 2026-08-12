@@ -30,7 +30,7 @@ def run_research_panel(
     rewrite_human: bool = True,
     evidence_mode: bool = True,
 ) -> dict[str, Any]:
-    active = list_active_providers(db)
+    active = list_active_providers(db, purpose="research")
     available = {p["provider"] for p in active}
     requested = providers or ["openai", "anthropic", "xai"]
     chosen = [p for p in requested if p in available]

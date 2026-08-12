@@ -82,7 +82,12 @@ def ensure_seed_data(db: Session) -> None:
         )
         db.add(admin)
         db.flush()
-        log_security_event(db, actor="system", action="seed_admin", detail="default admin")
+        log_security_event(
+            db,
+            actor="system",
+            action="seed_admin",
+            detail="Default admin account is ready for first sign-in",
+        )
 
     project_count = db.query(Project).count()
     if project_count == 0 and admin:
@@ -123,7 +128,12 @@ def ensure_seed_data(db: Session) -> None:
                     human_chars=0,
                 )
             )
-        log_security_event(db, actor="system", action="seed_project", detail="sample blank")
+        log_security_event(
+            db,
+            actor="system",
+            action="seed_project",
+            detail="Sample blank research project was created",
+        )
 
     from app.services.storage_paths import project_dir, storage_root
 
@@ -137,12 +147,17 @@ def ensure_seed_data(db: Session) -> None:
 
 
 def log_startup(db: Session, checks: dict[str, Any]) -> None:
-    # Keep startup notes tiny. Full research history is in git, not this table.
-    status = "ok" if checks.get("ok") else "degraded"
+    # Human-readable, still short. No package dump or code change trail.
+    if checks.get("ok"):
+        detail = "Health checks passed and local data storage is ready"
+    else:
+        errors = checks.get("errors") or []
+        first = str(errors[0]) if errors else "one or more checks failed"
+        detail = f"Started with warnings: {first}"
     log_security_event(
         db,
         actor="system",
         action="startup",
-        detail=status,
+        detail=detail,
         commit=True,
     )
