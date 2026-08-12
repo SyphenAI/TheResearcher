@@ -291,6 +291,8 @@ class JudgeOut(BaseModel):
     created_at: datetime
     models_used: list[str] = []
     used_live: bool = False
+    panel: list[dict[str, Any]] = Field(default_factory=list)
+    publish_ready_hint: bool | None = None
 
 
 class RewriteRequest(BaseModel):

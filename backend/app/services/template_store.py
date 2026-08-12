@@ -108,13 +108,25 @@ def load_templates() -> dict[str, dict[str, Any]]:
             continue
         out[str(key)] = _normalize_template(str(key), val)
 
-    # Ensure builtins remain available if file was emptied of them
-    for key, val in builtin_seed().items():
+    # Ensure builtins remain available; refresh empty prompts from code seeds.
+    builtins = builtin_seed()
+    changed = False
+    for key, val in builtins.items():
         if key not in out:
             out[key] = val
+            changed = True
+            continue
+        existing_defs = out[key].get("section_defs") or []
+        has_prompts = any(str(d.get("prompt") or "").strip() for d in existing_defs)
+        # Built-in packs get richer seeds from code when stored prompts are empty.
+        if out[key].get("builtin") and not has_prompts:
+            out[key] = val
+            changed = True
 
     if not out:
-        out = builtin_seed()
+        out = builtins
+        changed = True
+    if changed:
         _write_all(out)
     return out
 

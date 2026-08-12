@@ -159,6 +159,10 @@ def evidence_analyze(
         "ai_check": ai,
         "publish_gate": gate,
         "checklist_md": evidence_checklist_md(),
+        "insert_helpers": {
+            "uncited_count": analysis.get("uncited_count", 0),
+            "uncited_claims": analysis.get("uncited_claims", [])[:20],
+        },
     }
 
 

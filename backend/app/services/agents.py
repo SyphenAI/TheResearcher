@@ -16,8 +16,9 @@ SYSTEM_BASE = (
     "testing work into research insight writing. Write for security leaders who need decisions, "
     "not exploit steps. Direct tone, contractions, varied sentence length. Never use em dashes, "
     "double hyphens, or semicolons. Avoid AI cliches. Prefer evidence, citations, MITRE ATT&CK "
-    "and STRIDE framing, residual risk, and sequenced recommendations. Do not invent CVE counts "
-    "or market share. Mark uncertainty. Keep claims tight and responsible."
+    "and STRIDE framing, residual risk, and sequenced recommendations (do now / build next / stop). "
+    "Translate testing patterns into buyer outcomes. Do not invent CVE counts or market share. "
+    "Mark uncertainty. Keep claims tight and responsible. No exploit recipes."
 )
 
 
@@ -142,8 +143,10 @@ def run_research_panel(
                 "content": (
                     f"Mode: {mode}\nPrompt: {prompt}\n\n"
                     f"Merge into a single markdown research section with headings:\n"
-                    f"Summary, Threat framing (MITRE/STRIDE), Findings, Control/SaaS notes, "
-                    f"Residual risk, Open questions, References.\n\n"
+                    f"Summary, Decision framing, Threat framing (MITRE/STRIDE), Findings, "
+                    f"Options and tradeoffs, Residual risk, Recommendations (now/next/stop), "
+                    f"Open questions, References.\n"
+                    f"Every substantive claim needs a source or explicit [source needed].\n\n"
                     f"DRAFT:\n{draft[:7000]}\n\nCRITIQUE:\n{critique[:3500]}\n\nRED TEAM:\n{red[:3500]}"
                 ),
             }

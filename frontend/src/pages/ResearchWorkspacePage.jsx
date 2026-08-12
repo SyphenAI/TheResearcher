@@ -43,6 +43,8 @@ export default function ResearchWorkspacePage() {
   const [rightTab, setRightTab] = useState("paper");
   /** Pending humanize rewrite: accept/reject before writing to the section */
   const [humanizeDraft, setHumanizeDraft] = useState(null);
+  const [saveState, setSaveState] = useState("saved"); // saved | saving | dirty
+  const [checklistMd, setChecklistMd] = useState("");
   const humanizeRef = useRef(null);
 
   const activeSection = useMemo(
@@ -115,12 +117,30 @@ export default function ResearchWorkspacePage() {
 
   async function saveSectionContent(content_md) {
     if (!project || !activeSection) return;
-    const updated = await api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ content_md, prompt }),
-    });
-    setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-    await loadProject();
+    setSaveState("saving");
+    try {
+      const updated = await api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content_md, prompt }),
+      });
+      setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      await loadProject();
+      setSaveState("saved");
+    } catch (e) {
+      setSaveState("dirty");
+      throw e;
+    }
+  }
+
+  async function appendToSection(snippet, note) {
+    if (!activeSection || !snippet) return;
+    const next = `${activeSection.content_md || ""}${snippet}`;
+    setSections((prev) =>
+      prev.map((s) => (s.id === sectionId ? { ...s, content_md: next } : s))
+    );
+    await saveSectionContent(next);
+    setMessage(note || "Inserted into paper.");
+    setRightTab("paper");
   }
 
   async function runAssistant() {
@@ -300,12 +320,37 @@ export default function ResearchWorkspacePage() {
       });
       setEvidence(res.evidence);
       setGate(res.publish_gate);
-      setMessage(`Evidence coverage ${res.evidence.coverage_pct}% · AI likelihood ${res.ai_check.ai_pct}%`);
+      setChecklistMd(res.checklist_md || "");
+      const uncited = res.evidence?.uncited_count ?? 0;
+      setMessage(
+        `Evidence coverage ${res.evidence.coverage_pct}% · AI likelihood ${res.ai_check.ai_pct}%` +
+          (uncited ? ` · ${uncited} uncited claim(s) — insert evidence notes below.` : "")
+      );
     } catch (e) {
       setError(e.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function insertEvidenceNote(claim) {
+    const snippet =
+      claim?.insert_snippet ||
+      `\n\n> **Evidence note**\n> Claim: ${claim?.text || "Claim"}\n> Source: [title](https://)\n> Confidence: low\n`;
+    await appendToSection(snippet, "Evidence note inserted under the paper. Fill in the real source.");
+  }
+
+  async function insertEvidenceChecklist() {
+    let md = checklistMd;
+    if (!md) {
+      const res = await api(
+        `/api/workspace/evidence/checklist?topic=${encodeURIComponent(activeSection?.title || "")}`
+      );
+      md = res.markdown || "";
+      setChecklistMd(md);
+    }
+    if (!md) return;
+    await appendToSection(`\n\n${md}\n`, "Evidence checklist inserted into paper.");
   }
 
   async function refreshGate() {
@@ -453,25 +498,45 @@ export default function ResearchWorkspacePage() {
   }
 
   async function makeDiagram(kind) {
-    const res = await api("/api/workspace/diagrams", {
-      method: "POST",
-      body: JSON.stringify({
-        kind,
-        title: project?.title || "Attack path",
-        project_id: activeId,
-        section_id: sectionId,
-        text: activeSection?.content_md || "",
-      }),
-    });
-    setDiagram(res.mermaid || "");
-    setRightTab("diagram");
+    setBusy(true);
+    setError("");
+    try {
+      const res = await api("/api/workspace/diagrams", {
+        method: "POST",
+        body: JSON.stringify({
+          kind,
+          title: project?.title || "Attack path",
+          project_id: activeId,
+          section_id: sectionId,
+          text: activeSection?.content_md || "",
+        }),
+      });
+      setDiagram(res.mermaid || "");
+      setRightTab("diagram");
+      setMessage("Diagram generated. Insert into paper when ready.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function insertDiagramIntoPaper() {
+    if (!diagram.trim()) {
+      setError("Generate a diagram first.");
+      return;
+    }
+    const block =
+      `\n\n### Diagram\n\n` +
+      "```mermaid\n" +
+      diagram.trim() +
+      "\n```\n";
+    await appendToSection(block, "Diagram inserted into the active section as a Mermaid block.");
   }
 
   async function insertCitation(formatted) {
     if (!activeSection) return;
-    const next = `${activeSection.content_md}\n\n${formatted}\n`;
-    await saveSectionContent(next);
-    setMessage("Citation inserted into paper.");
+    await appendToSection(`\n\n${formatted}\n`, "Citation inserted into paper.");
   }
 
   if (!project && !error) {
@@ -511,11 +576,27 @@ export default function ResearchWorkspacePage() {
       {gate && (
         <div className={`alert ${gate.ready ? "ok" : "warn"}`}>
           <strong>Publish gate: {gate.ready ? "ready" : "blocked"}</strong>
+          {gate.message && <div className="muted" style={{ marginTop: "0.25rem" }}>{gate.message}</div>}
           {!gate.ready && (
             <ul style={{ margin: "0.4rem 0 0" }}>
-              {(gate.blockers || []).map((b) => (
-                <li key={b}>{b}</li>
-              ))}
+              {(gate.actions || []).length
+                ? gate.actions.map((a) => (
+                    <li key={a.blocker}>
+                      <strong>{a.blocker}</strong>
+                      <div className="muted">{a.action}</div>
+                      {a.desk_hint === "humanize" && !isReviewer && (
+                        <button className="btn" type="button" style={{ marginTop: "0.3rem" }} onClick={humanizeSection} disabled={busy}>
+                          Open Humanize
+                        </button>
+                      )}
+                      {a.desk_hint === "evidence" && !isReviewer && (
+                        <button className="btn" type="button" style={{ marginTop: "0.3rem" }} onClick={runEvidence} disabled={busy}>
+                          Run Evidence check
+                        </button>
+                      )}
+                    </li>
+                  ))
+                : (gate.blockers || []).map((b) => <li key={b}>{b}</li>)}
             </ul>
           )}
         </div>
@@ -707,13 +788,58 @@ export default function ResearchWorkspacePage() {
                 </div>
               )}
               {judgeOut && (
-                <div className="alert warn">
-                  <strong>Judge {judgeOut.overall_score}/10</strong>
-                  <div>{judgeOut.feedback}</div>
+                <div className="alert warn stack">
+                  <strong>
+                    Judge {judgeOut.overall_score}/10
+                    {judgeOut.used_live ? " · multi-model panel" : " · local only"}
+                  </strong>
+                  {!!(judgeOut.models_used || []).length && (
+                    <div className="row">
+                      {(judgeOut.models_used || []).map((m) => (
+                        <span className="badge" key={m}>
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {judgeOut.publish_ready_hint === true && (
+                    <div className="badge good">Live judges lean publish-ready</div>
+                  )}
+                  {judgeOut.publish_ready_hint === false && (
+                    <div className="badge bad">Live judges say not publish-ready</div>
+                  )}
+                  {(judgeOut.panel || []).length > 0 && (
+                    <div className="stack">
+                      <strong>Panel roles</strong>
+                      {(judgeOut.panel || []).map((p, idx) => (
+                        <div key={`${p.provider}-${idx}`} className="panel" style={{ padding: "0.6rem" }}>
+                          <div className="row" style={{ justifyContent: "space-between" }}>
+                            <span>
+                              <strong>{p.provider}</strong> · {p.model || "default"}
+                            </span>
+                            <span className={p.ok ? "badge good" : "badge bad"}>
+                              {p.ok ? "ok" : "failed"}
+                            </span>
+                          </div>
+                          <pre
+                            style={{
+                              whiteSpace: "pre-wrap",
+                              margin: "0.4rem 0 0",
+                              fontFamily: "var(--mono)",
+                              fontSize: "0.8rem",
+                            }}
+                          >
+                            {p.feedback}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ whiteSpace: "pre-wrap" }}>{judgeOut.feedback}</div>
                 </div>
               )}
               {evidence && (
-                <div className="alert ok">
+                <div className="alert ok stack">
                   <strong>
                     Evidence {evidence.coverage_pct}% · claims {evidence.claim_count} · uncited{" "}
                     {evidence.uncited_count}
@@ -723,6 +849,32 @@ export default function ResearchWorkspacePage() {
                       <li key={r}>{r}</li>
                     ))}
                   </ul>
+                  <div className="row">
+                    <button className="btn" type="button" onClick={insertEvidenceChecklist} disabled={busy || isReviewer}>
+                      Insert checklist into paper
+                    </button>
+                  </div>
+                  {(evidence.uncited_claims || evidence.claims || [])
+                    .filter((c) => !c.has_citation)
+                    .slice(0, 8)
+                    .map((c) => (
+                      <div key={`${c.line}-${c.text.slice(0, 24)}`} className="panel stack" style={{ padding: "0.55rem" }}>
+                        <div className="muted" style={{ fontSize: "0.8rem" }}>
+                          Line {c.line} · uncited
+                        </div>
+                        <div style={{ fontSize: "0.88rem" }}>{c.text}</div>
+                        {!isReviewer && (
+                          <button
+                            className="btn"
+                            type="button"
+                            onClick={() => insertEvidenceNote(c)}
+                            disabled={busy}
+                          >
+                            Insert evidence note
+                          </button>
+                        )}
+                      </div>
+                    ))}
                 </div>
               )}
 
@@ -761,14 +913,23 @@ export default function ResearchWorkspacePage() {
 
               <h3>Diagrams</h3>
               <div className="row">
-                <button className="btn" type="button" onClick={() => makeDiagram("attack")}>
+                <button className="btn" type="button" onClick={() => makeDiagram("attack")} disabled={busy}>
                   Attack path
                 </button>
-                <button className="btn" type="button" onClick={() => makeDiagram("stride")}>
+                <button className="btn" type="button" onClick={() => makeDiagram("stride")} disabled={busy}>
                   STRIDE map
                 </button>
-                <button className="btn" type="button" onClick={() => makeDiagram("controls")}>
+                <button className="btn" type="button" onClick={() => makeDiagram("controls")} disabled={busy}>
                   Control gaps
+                </button>
+                <button
+                  className="btn primary"
+                  type="button"
+                  onClick={insertDiagramIntoPaper}
+                  disabled={busy || !diagram || isReviewer}
+                  title="Insert the generated Mermaid diagram into the active section"
+                >
+                  Insert diagram into paper
                 </button>
               </div>
 
@@ -928,7 +1089,16 @@ export default function ResearchWorkspacePage() {
                     Diagram
                   </button>
                 </div>
-                <span className="badge">{activeSection?.title || "markdown"}</span>
+                <div className="row">
+                  <span className="badge">{activeSection?.title || "markdown"}</span>
+                  <span
+                    className={
+                      saveState === "saved" ? "badge good" : saveState === "saving" ? "badge" : "badge bad"
+                    }
+                  >
+                    {saveState === "saved" ? "Saved" : saveState === "saving" ? "Saving…" : "Unsaved edits"}
+                  </span>
+                </div>
               </div>
               {rightTab === "paper" ? (
                 <>
@@ -937,6 +1107,7 @@ export default function ResearchWorkspacePage() {
                     value={activeSection?.content_md || ""}
                     onChange={(e) => {
                       const val = e.target.value;
+                      setSaveState("dirty");
                       setSections((prev) =>
                         prev.map((s) => (s.id === sectionId ? { ...s, content_md: val } : s))
                       );
@@ -946,20 +1117,33 @@ export default function ResearchWorkspacePage() {
                   />
                   <p className="footer-note">
                     Edits save on blur and count as human contribution unless applied from the assistant.
+                    Humanize requires Accept. Diagrams and evidence notes insert into this section.
                   </p>
                 </>
               ) : (
-                <pre
-                  style={{
-                    minHeight: 640,
-                    whiteSpace: "pre-wrap",
-                    fontFamily: "var(--mono)",
-                    fontSize: "0.85rem",
-                    margin: 0,
-                  }}
-                >
-                  {diagram || "Generate a diagram from the left tools."}
-                </pre>
+                <div className="stack">
+                  <div className="row">
+                    <button
+                      className="btn primary"
+                      type="button"
+                      onClick={insertDiagramIntoPaper}
+                      disabled={busy || !diagram || isReviewer}
+                    >
+                      Insert diagram into paper
+                    </button>
+                  </div>
+                  <pre
+                    style={{
+                      minHeight: 600,
+                      whiteSpace: "pre-wrap",
+                      fontFamily: "var(--mono)",
+                      fontSize: "0.85rem",
+                      margin: 0,
+                    }}
+                  >
+                    {diagram || "Generate a diagram from the left tools."}
+                  </pre>
+                </div>
               )}
             </div>
           </div>

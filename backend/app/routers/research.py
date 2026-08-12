@@ -357,26 +357,40 @@ def judge_output(
     judge_providers = list_active_providers(db, purpose="judge")
     models_used: list[str] = ["local"]
     live_bits: list[str] = []
+    panel: list[dict] = [
+        {
+            "role": "local_baseline",
+            "provider": "local",
+            "model": "heuristic",
+            "ok": True,
+            "feedback": result["feedback"][:500],
+            "overall_score": result["overall_score"],
+        }
+    ]
     criteria = ", ".join(body.criteria or [])
 
     # Use up to 3 judge-enabled providers for multi-perspective review.
     for item in judge_providers[:3]:
         provider = item["provider"]
+        preferred = (item.get("model") or "").strip() or None
         live = chat(
             db,
             provider=provider,
+            model=preferred,
             system=(
                 "You are a strict research judge for Security Operations writing aimed at "
                 "security leaders. Focus on decision quality, evidence, residual risk, and "
                 "whether this reads like analyst insight rather than a pentest ticket. "
-                "Be direct. No em dashes or AI filler."
+                "Be direct. No em dashes or AI filler. "
+                "End with a line: PUBLISH_READY: yes|no and SCORE: n/10."
             ),
             messages=[
                 {
                     "role": "user",
                     "content": (
                         f"Criteria: {criteria}\n\n"
-                        f"Give short feedback: strengths, gaps, publish-ready yes/no, and one rewrite priority.\n\n"
+                        f"Give short feedback: strengths, gaps, publish-ready yes/no, score /10, "
+                        f"and one rewrite priority.\n\n"
                         f"TEXT:\n{body.text[:9000]}"
                     ),
                 }
@@ -384,10 +398,38 @@ def judge_output(
             max_tokens=700,
         )
         if live.content and not live.error:
-            models_used.append(provider)
-            live_bits.append(f"**{provider}:** {live.content[:900]}")
-        elif live.error:
-            live_bits.append(f"**{provider}:** unavailable ({live.error[:120]})")
+            models_used.append(f"{provider}:{live.model}" if live.model else provider)
+            excerpt = live.content[:900]
+            live_bits.append(f"**{provider}** (`{live.model or 'default'}`): {excerpt}")
+            ready_hint = None
+            low = live.content.lower()
+            if "publish_ready: yes" in low or "publish-ready: yes" in low:
+                ready_hint = True
+            elif "publish_ready: no" in low or "publish-ready: no" in low:
+                ready_hint = False
+            panel.append(
+                {
+                    "role": "live_judge",
+                    "provider": provider,
+                    "model": live.model or preferred or "default",
+                    "ok": True,
+                    "feedback": excerpt,
+                    "publish_ready_hint": ready_hint,
+                }
+            )
+        else:
+            err = (live.error or "unavailable")[:160]
+            live_bits.append(f"**{provider}:** unavailable ({err})")
+            panel.append(
+                {
+                    "role": "live_judge",
+                    "provider": provider,
+                    "model": preferred or "default",
+                    "ok": False,
+                    "feedback": err,
+                    "publish_ready_hint": None,
+                }
+            )
 
     if live_bits:
         result["feedback"] = (
@@ -397,6 +439,15 @@ def judge_output(
         result["feedback"] = (
             f"{result['feedback']} No judge-enabled models active in Security. Local judge only."
         )
+
+    live_ready = [p.get("publish_ready_hint") for p in panel if p.get("role") == "live_judge" and p.get("ok")]
+    publish_ready_hint = None
+    if live_ready:
+        # unanimous yes -> True; any no -> False; else None
+        if all(v is True for v in live_ready):
+            publish_ready_hint = True
+        elif any(v is False for v in live_ready):
+            publish_ready_hint = False
 
     row = JudgeResult(
         project_id=body.project_id,
@@ -417,7 +468,9 @@ def judge_output(
         feedback=row.feedback,
         created_at=row.created_at,
         models_used=models_used,
-        used_live=len(models_used) > 1,
+        used_live=any(p.get("role") == "live_judge" and p.get("ok") for p in panel),
+        panel=panel,
+        publish_ready_hint=publish_ready_hint,
     )
 
 
