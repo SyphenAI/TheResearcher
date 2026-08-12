@@ -146,7 +146,6 @@ export default function AiCheckerPage() {
         <h1>AI Checker</h1>
         <p className="muted">
           Local heuristic scan for AI-like writing. Paste text or upload PDF, Word, and other common formats.
-          Target under 10% agent share on final research.
         </p>
       </div>
 

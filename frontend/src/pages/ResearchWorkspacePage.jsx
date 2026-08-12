@@ -409,7 +409,7 @@ export default function ResearchWorkspacePage() {
           </button>
           <h1 style={{ margin: "0.5rem 0 0" }}>{project?.title || "Research desk"}</h1>
           <p className="muted" style={{ margin: "0.25rem 0 0" }}>
-            Panel research desk for OffSec · Exposure · VM. Keep final agent share under 10%.
+            Panel research desk for OffSec · Exposure · VM.
           </p>
         </div>
         <div className="row">
@@ -793,7 +793,6 @@ export default function ResearchWorkspacePage() {
                   />
                   <p className="footer-note">
                     Edits save on blur and count as human contribution unless applied from the assistant.
-                    Use Humanize + evidence check before Export Word.
                   </p>
                 </>
               ) : (
