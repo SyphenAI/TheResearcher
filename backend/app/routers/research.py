@@ -31,6 +31,7 @@ from app.schemas import (
     JudgeRequest,
     RewriteRequest,
     SectionOut,
+    SummarizeRequest,
     TextExtractOut,
 )
 from app.services.ai_style import humanize_text, local_judge, local_research_assist, score_ai_likelihood
@@ -239,6 +240,81 @@ def rewrite_text(
             )
         ),
     }
+
+
+@router.post("/summarize")
+def summarize_source(
+    body: SummarizeRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Summarize pasted text or fetch+summarize a public URL."""
+    from app.services.summarize import fetch_url_text, summarize_payload
+
+    try:
+        if (body.url or "").strip():
+            fetched = fetch_url_text(body.url.strip())
+            return summarize_payload(
+                db,
+                text=fetched["text"],
+                title=body.title.strip() or fetched.get("title") or "",
+                source_type=fetched.get("source_type") or "url",
+                source_ref=fetched.get("url") or body.url,
+                mode=body.mode,
+                user_name=user.username,
+                ocr_used=bool(fetched.get("ocr_used")),
+            )
+        if (body.text or "").strip():
+            return summarize_payload(
+                db,
+                text=body.text,
+                title=body.title.strip() or "Pasted text",
+                source_type="text",
+                source_ref="paste",
+                mode=body.mode,
+                user_name=user.username,
+            )
+        raise HTTPException(status_code=400, detail="Provide a URL or text to summarize.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/summarize/upload")
+async def summarize_upload(
+    file: UploadFile = File(...),
+    mode: str = "auto",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Extract text from an uploaded document and summarize it."""
+    from app.services.summarize import summarize_payload
+
+    data = await file.read()
+    try:
+        extracted = extract_text_from_upload(
+            file.filename or "upload.bin",
+            data,
+            file.content_type,
+        )
+    except DocumentExtractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        result = summarize_payload(
+            db,
+            text=extracted["text"],
+            title=extracted.get("filename") or file.filename or "Upload",
+            source_type="upload",
+            source_ref=extracted.get("filename") or file.filename or "upload",
+            mode=mode,
+            user_name=user.username,
+            ocr_used=bool(extracted.get("ocr_used")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["filename"] = extracted.get("filename")
+    result["extension"] = extracted.get("extension")
+    result["truncated"] = extracted.get("truncated")
+    return result
 
 
 @router.get("/extract/formats")

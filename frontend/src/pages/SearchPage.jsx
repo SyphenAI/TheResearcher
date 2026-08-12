@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 
@@ -6,7 +6,9 @@ export default function SearchPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const initial = params.get("q") || "";
-  const initialTab = params.get("tab") === "scholar" ? "scholar" : "library";
+  const tabParam = params.get("tab");
+  const initialTab =
+    tabParam === "scholar" ? "scholar" : tabParam === "summarize" ? "summarize" : "library";
   const [tab, setTab] = useState(initialTab);
   const [q, setQ] = useState(initial);
   const [hits, setHits] = useState([]);
@@ -16,6 +18,12 @@ export default function SearchPage() {
   const [busy, setBusy] = useState(false);
   const [projects, setProjects] = useState([]);
   const [artifactProjectId, setArtifactProjectId] = useState("");
+
+  // Summarize tab state
+  const [sumUrl, setSumUrl] = useState("");
+  const [sumText, setSumText] = useState("");
+  const [sumResult, setSumResult] = useState(null);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     api("/api/projects")
@@ -81,7 +89,91 @@ export default function SearchPage() {
 
   async function runSearch(term) {
     if (tab === "scholar") return runScholarSearch(term);
+    if (tab === "summarize") return;
     return runLibrarySearch(term);
+  }
+
+  async function summarizeUrl(mode = "auto") {
+    const url = sumUrl.trim();
+    if (!url) {
+      setError("Paste a public http(s) URL to summarize.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setSumResult(null);
+    try {
+      const res = await api("/api/research/summarize", {
+        method: "POST",
+        body: JSON.stringify({ url, mode }),
+      });
+      setSumResult(res);
+      setMessage(
+        res.note ||
+          `Summary ready (${res.mode})${res.used_live ? ` via ${res.provider}` : " local"}.`
+      );
+      setParams({ tab: "summarize" });
+    } catch (e) {
+      setError(e.message || "URL summarize failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function summarizeText(mode = "auto") {
+    if (!sumText.trim()) {
+      setError("Paste text to summarize, or use a URL / file.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setSumResult(null);
+    try {
+      const res = await api("/api/research/summarize", {
+        method: "POST",
+        body: JSON.stringify({ text: sumText, mode, title: "Pasted text" }),
+      });
+      setSumResult(res);
+      setMessage(res.note || `Summary ready (${res.mode}).`);
+      setParams({ tab: "summarize" });
+    } catch (e) {
+      setError(e.message || "Text summarize failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function summarizeFile(mode = "auto") {
+    const file = fileRef.current?.files?.[0];
+    if (!file) {
+      setError("Choose a document first (PDF, Word, etc.).");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    setSumResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api(`/api/research/summarize/upload?mode=${encodeURIComponent(mode)}`, {
+        method: "POST",
+        body: form,
+      });
+      setSumResult(res);
+      if (res.text_preview) setSumText(res.text_preview);
+      setMessage(
+        (res.note || "Document summarized.") +
+          (res.ocr_used ? " OCR was used on this file." : "")
+      );
+      setParams({ tab: "summarize" });
+    } catch (e) {
+      setError(e.message || "Document summarize failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function addScholarCitation(item) {
@@ -108,8 +200,42 @@ export default function SearchPage() {
     }
   }
 
+  async function saveSummaryToProject() {
+    if (!sumResult?.summary) {
+      setError("Run a summary first.");
+      return;
+    }
+    if (!artifactProjectId) {
+      setError("Select a project to attach the summary.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const name = `summary-${stamp}.md`;
+      const header =
+        `# ${sumResult.title || "Summary"}\n\n` +
+        `_Source: ${sumResult.source_type} · ${sumResult.source_ref || ""} · mode ${sumResult.mode}_\n\n---\n\n`;
+      const blob = new Blob([header + sumResult.summary], {
+        type: "text/markdown;charset=utf-8",
+      });
+      const form = new FormData();
+      form.append("file", blob, name);
+      await api(`/api/research/projects/${artifactProjectId}/artifacts`, {
+        method: "POST",
+        body: form,
+      });
+      setMessage(`Saved summary artifact on project #${artifactProjectId}.`);
+    } catch (e) {
+      setError(e.message || "Could not save summary artifact.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
-    if (initial.trim().length >= 2) {
+    if (initial.trim().length >= 2 && initialTab !== "summarize") {
       if (initialTab === "scholar") runScholarSearch(initial);
       else runLibrarySearch(initial);
     }
@@ -121,8 +247,7 @@ export default function SearchPage() {
       <div>
         <h1>Search</h1>
         <p className="muted">
-          Search your local research library, or search the world of scholarly papers (same engines as
-          the project desk).
+          Local library, world scholar papers, or summarize a public URL / uploaded document.
         </p>
       </div>
 
@@ -144,32 +269,41 @@ export default function SearchPage() {
         >
           Scholar (world)
         </button>
+        <button
+          className={`tab ${tab === "summarize" ? "active" : ""}`}
+          type="button"
+          onClick={() => setTab("summarize")}
+        >
+          Summarize
+        </button>
       </div>
 
-      <form
-        className="panel row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          runSearch();
-        }}
-      >
-        <label style={{ flex: 1 }}>
-          Query
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={
-              tab === "scholar"
-                ? "e.g. exposure management prioritization exploitability"
-                : "e.g. residual risk, BAS, exposure ownership"
-            }
-            autoFocus
-          />
-        </label>
-        <button className="btn primary" type="submit" disabled={busy}>
-          {busy ? "Searching…" : tab === "scholar" ? "Search scholar" : "Search library"}
-        </button>
-      </form>
+      {tab !== "summarize" && (
+        <form
+          className="panel row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            runSearch();
+          }}
+        >
+          <label style={{ flex: 1 }}>
+            Query
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={
+                tab === "scholar"
+                  ? "e.g. exposure management prioritization exploitability"
+                  : "e.g. residual risk, BAS, exposure ownership"
+              }
+              autoFocus
+            />
+          </label>
+          <button className="btn primary" type="submit" disabled={busy}>
+            {busy ? "Searching…" : tab === "scholar" ? "Search scholar" : "Search library"}
+          </button>
+        </form>
+      )}
 
       {tab === "library" && (
         <div className="panel stack">
@@ -249,6 +383,18 @@ export default function SearchPage() {
                   </a>
                 )}
                 <button
+                  className="btn"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setSumUrl(hit.url || (hit.doi ? `https://doi.org/${hit.doi}` : ""));
+                    setTab("summarize");
+                    setMessage("URL loaded into Summarize. Run Local or Live summarize.");
+                  }}
+                >
+                  Summarize URL
+                </button>
+                <button
                   className="btn primary"
                   type="button"
                   disabled={busy || !artifactProjectId}
@@ -268,6 +414,154 @@ export default function SearchPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === "summarize" && (
+        <div className="stack">
+          <div className="panel stack">
+            <h2 style={{ margin: 0 }}>Summarize source</h2>
+            <p className="muted" style={{ margin: 0 }}>
+              Fetch a public URL, upload a document (PDF/Word/etc., OCR if needed), or paste text.
+              Local is free/extractive. Live uses a research-enabled model for analyst-style summary.
+            </p>
+
+            <label>
+              URL
+              <input
+                value={sumUrl}
+                onChange={(e) => setSumUrl(e.target.value)}
+                placeholder="https://example.com/article-or-pdf"
+              />
+            </label>
+            <div className="row">
+              <button className="btn" type="button" disabled={busy} onClick={() => summarizeUrl("local")}>
+                Local summarize URL
+              </button>
+              <button
+                className="btn primary"
+                type="button"
+                disabled={busy}
+                onClick={() => summarizeUrl("live")}
+              >
+                Live summarize URL
+              </button>
+            </div>
+
+            <label>
+              Or upload document
+              <input ref={fileRef} type="file" disabled={busy} />
+            </label>
+            <div className="row">
+              <button className="btn" type="button" disabled={busy} onClick={() => summarizeFile("local")}>
+                Local summarize file
+              </button>
+              <button
+                className="btn primary"
+                type="button"
+                disabled={busy}
+                onClick={() => summarizeFile("live")}
+              >
+                Live summarize file
+              </button>
+            </div>
+
+            <label>
+              Or paste text
+              <textarea
+                style={{ minHeight: 140 }}
+                value={sumText}
+                onChange={(e) => setSumText(e.target.value)}
+                placeholder="Paste article text, notes, or extracted content"
+                disabled={busy}
+              />
+            </label>
+            <div className="row">
+              <button className="btn" type="button" disabled={busy} onClick={() => summarizeText("local")}>
+                Local summarize text
+              </button>
+              <button
+                className="btn primary"
+                type="button"
+                disabled={busy}
+                onClick={() => summarizeText("live")}
+              >
+                Live summarize text
+              </button>
+            </div>
+
+            <div className="row" style={{ alignItems: "flex-end" }}>
+              <label style={{ minWidth: 220, flex: 1 }}>
+                Save summary to project artifacts
+                <select
+                  value={artifactProjectId}
+                  onChange={(e) => setArtifactProjectId(e.target.value)}
+                  disabled={!projects.length || busy}
+                >
+                  {!projects.length && <option value="">No projects yet</option>}
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="btn primary"
+                type="button"
+                disabled={busy || !sumResult?.summary || !artifactProjectId}
+                onClick={saveSummaryToProject}
+              >
+                Save summary artifact
+              </button>
+            </div>
+          </div>
+
+          {sumResult && (
+            <div className="panel stack">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h2 style={{ margin: 0 }}>{sumResult.title || "Summary"}</h2>
+                <div className="row">
+                  <span className="badge">{sumResult.mode}</span>
+                  {sumResult.used_live && (
+                    <span className="badge good">
+                      {sumResult.provider}
+                      {sumResult.model ? ` · ${sumResult.model}` : ""}
+                    </span>
+                  )}
+                  {sumResult.ocr_used && <span className="badge">OCR</span>}
+                </div>
+              </div>
+              <p className="muted" style={{ margin: 0 }}>
+                {sumResult.source_type} · {sumResult.source_ref} · {sumResult.char_count} chars
+                {sumResult.note ? ` · ${sumResult.note}` : ""}
+              </p>
+              <pre
+                style={{
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "var(--mono)",
+                  fontSize: "0.88rem",
+                  margin: 0,
+                }}
+              >
+                {sumResult.summary}
+              </pre>
+              {sumResult.text_preview && (
+                <details>
+                  <summary className="muted">Source preview</summary>
+                  <pre
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      fontFamily: "var(--mono)",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    {sumResult.text_preview}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -314,6 +314,15 @@ class RewriteRequest(BaseModel):
     mode: str = "auto"
 
 
+class SummarizeRequest(BaseModel):
+    """Summarize pasted text or a public URL."""
+
+    text: str = ""
+    url: str = ""
+    mode: str = "auto"  # local | live | auto
+    title: str = ""
+
+
 class ExportRequest(BaseModel):
     title: str
     content_md: str
