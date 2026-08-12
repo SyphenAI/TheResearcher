@@ -152,15 +152,16 @@ export default function AiCheckerPage() {
     }
   }
 
-  async function humanizeThenCheck() {
+  async function humanizeThenCheck(mode = "local") {
     const original = text;
     if (!original.trim()) {
       setError("Paste or load text first.");
       return;
     }
+    const rewriteMode = mode === "live" ? "live" : "local";
 
     setBusy(true);
-    setBusyLabel("Humanizing…");
+    setBusyLabel(rewriteMode === "live" ? "Live humanizing…" : "Local humanizing…");
     setError("");
     setMessage("");
     setKeptVersion(null);
@@ -170,13 +171,14 @@ export default function AiCheckerPage() {
         body: JSON.stringify({
           text: original,
           source_label: sourceName ? `before-humanize:${sourceName}` : "before-humanize",
+          mode: "quick",
         }),
       });
 
-      setBusyLabel("Rewriting…");
+      setBusyLabel(rewriteMode === "live" ? "Live model rewrite…" : "Local rules rewrite…");
       const rewritten = await api("/api/research/rewrite", {
         method: "POST",
-        body: JSON.stringify({ text: original, strength: "high" }),
+        body: JSON.stringify({ text: original, strength: "high", mode: rewriteMode }),
       });
       const humanized = rewritten.content || "";
       if (!humanized.trim()) {
@@ -186,18 +188,24 @@ export default function AiCheckerPage() {
       setBusyLabel("Rechecking…");
       const after = await api("/api/research/ai-check", {
         method: "POST",
-        body: JSON.stringify({ text: humanized, source_label: "after-humanize" }),
+        body: JSON.stringify({
+          text: humanized,
+          source_label: `after-humanize-${rewriteMode}`,
+          mode: "quick",
+        }),
       });
 
       // Keep original in the main editor until user chooses Keep or Restore.
-      // Proposed lives in the compare panel so Keep has a visible effect.
       setCompare({
         original,
         humanized,
         before,
         after,
         provider: rewritten.provider || null,
+        model: rewritten.model || null,
         used_live: !!rewritten.used_live,
+        mode: rewritten.mode || rewriteMode,
+        note: rewritten.note || "",
         original_len: rewritten.original_len ?? original.length,
         rewritten_len: rewritten.rewritten_len ?? humanized.length,
       });
@@ -205,8 +213,8 @@ export default function AiCheckerPage() {
 
       const delta = Number((before.ai_pct - after.ai_pct).toFixed(1));
       const via = rewritten.used_live
-        ? `via ${rewritten.provider || "live model"}`
-        : "via local rewrite";
+        ? `via live ${rewritten.provider || "model"}${rewritten.model ? ` (${rewritten.model})` : ""}`
+        : "via local rules";
       const deltaText =
         delta > 0
           ? `AI likelihood dropped ${delta} points (${before.ai_pct}% → ${after.ai_pct}%).`
@@ -481,8 +489,9 @@ export default function AiCheckerPage() {
         <h1>AI Checker</h1>
         <p className="muted">
           <strong>Quick check</strong> is a free local heuristic. <strong>Live panel</strong> adds up to 3
-          research-enabled models for a second opinion (uses tokens; prefer Haiku/mini).{" "}
-          <strong>Humanize + recheck</strong> drafts a rewrite with red/green compare.
+          research models for a second opinion.{" "}
+          <strong>Local humanize</strong> is free style cleanup; <strong>Live humanize</strong> uses a
+          research model for a stronger rewrite (modern voice). Both open red/green compare.
         </p>
       </div>
 
@@ -588,19 +597,30 @@ export default function AiCheckerPage() {
           >
             {busy && busyLabel.includes("Live") ? busyLabel : "1b. Live panel"}
           </button>
-          <button className="btn" onClick={humanizeThenCheck} disabled={busy || !text.trim()}>
-            {busy &&
-            (busyLabel.includes("Humaniz") ||
-              busyLabel.includes("Rewrit") ||
-              busyLabel.includes("Recheck") ||
-              busyLabel.includes("Applying"))
+          <button
+            className="btn"
+            onClick={() => humanizeThenCheck("local")}
+            disabled={busy || !text.trim()}
+            title="Free local style cleanup only"
+          >
+            {busy && busyLabel.includes("Local human")
               ? busyLabel
-              : "2. Humanize + recheck"}
+              : "2a. Local humanize"}
+          </button>
+          <button
+            className="btn"
+            onClick={() => humanizeThenCheck("live")}
+            disabled={busy || !text.trim()}
+            title="Live research model rewrite (uses tokens)"
+          >
+            {busy && (busyLabel.includes("Live human") || busyLabel.includes("Live model"))
+              ? busyLabel
+              : "2b. Live humanize"}
           </button>
         </div>
         <p className="footer-note" style={{ margin: 0 }}>
-          Live panel uses Security tokens with Research enabled (one call per provider, max 3). Preferred
-          model on each token is used when set.
+          Live panel / live humanize use Security tokens with Research on. Preferred model on each token
+          is used when set (prefer Haiku/mini for cost).
         </p>
       </div>
 
@@ -622,8 +642,11 @@ export default function AiCheckerPage() {
           </div>
           <p className="muted" style={{ margin: 0 }}>
             {compare.used_live
-              ? `Rewrite used live model (${compare.provider || "provider"}).`
-              : "Rewrite used local rules only (no live model)."}{" "}
+              ? `Rewrite mode: live · ${compare.provider || "provider"}${
+                  compare.model ? ` · ${compare.model}` : ""
+                }.`
+              : "Rewrite mode: local rules only."}{" "}
+            {compare.note ? `${compare.note} ` : ""}
             Length {compare.original_len} → {compare.rewritten_len} chars.{" "}
             <strong>Keep humanized</strong> loads the proposed text into the editor and closes this panel.
           </p>

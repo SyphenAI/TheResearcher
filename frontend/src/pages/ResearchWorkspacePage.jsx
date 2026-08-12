@@ -205,13 +205,14 @@ export default function ResearchWorkspacePage() {
     }
   }
 
-  async function humanizeSection() {
+  async function humanizeSection(mode = "local") {
     if (!activeSection) return;
     const original = activeSection.content_md || "";
     if (!original.trim()) {
       setError("Section is empty. Write or apply research content first.");
       return;
     }
+    const rewriteMode = mode === "live" ? "live" : "local";
     setBusy(true);
     setError("");
     setMessage("");
@@ -221,11 +222,12 @@ export default function ResearchWorkspacePage() {
         body: JSON.stringify({
           text: original,
           source_label: `section-before:${activeSection.id}`,
+          mode: "quick",
         }),
       });
       const result = await api("/api/research/rewrite", {
         method: "POST",
-        body: JSON.stringify({ text: original, strength: "high" }),
+        body: JSON.stringify({ text: original, strength: "high", mode: rewriteMode }),
       });
       const proposed = result.content || "";
       if (!proposed.trim()) {
@@ -235,7 +237,8 @@ export default function ResearchWorkspacePage() {
         method: "POST",
         body: JSON.stringify({
           text: proposed,
-          source_label: `section-after-humanize:${activeSection.id}`,
+          source_label: `section-after-humanize-${rewriteMode}:${activeSection.id}`,
+          mode: "quick",
         }),
       });
       setHumanizeDraft({
@@ -246,12 +249,15 @@ export default function ResearchWorkspacePage() {
         before,
         after,
         provider: result.provider || null,
+        model: result.model || null,
         used_live: !!result.used_live,
+        mode: result.mode || rewriteMode,
+        note: result.note || "",
       });
       const delta = Number((before.ai_pct - after.ai_pct).toFixed(1));
       const via = result.used_live
-        ? `via ${result.provider || "live model"}`
-        : "via local rewrite";
+        ? `via live ${result.provider || "model"}${result.model ? ` (${result.model})` : ""}`
+        : "via local rules";
       setMessage(
         `Humanize draft ready ${via}. AI likelihood ${before.ai_pct}% → ${after.ai_pct}%` +
           (delta > 0 ? ` (↓ ${delta} pts).` : delta < 0 ? ` (↑ ${Math.abs(delta)} pts).` : ".") +
@@ -585,9 +591,14 @@ export default function ResearchWorkspacePage() {
                       <strong>{a.blocker}</strong>
                       <div className="muted">{a.action}</div>
                       {a.desk_hint === "humanize" && !isReviewer && (
-                        <button className="btn" type="button" style={{ marginTop: "0.3rem" }} onClick={humanizeSection} disabled={busy}>
-                          Open Humanize
-                        </button>
+                        <div className="row" style={{ marginTop: "0.3rem" }}>
+                          <button className="btn" type="button" onClick={() => humanizeSection("local")} disabled={busy}>
+                            Local humanize
+                          </button>
+                          <button className="btn" type="button" onClick={() => humanizeSection("live")} disabled={busy}>
+                            Live humanize
+                          </button>
+                        </div>
                       )}
                       {a.desk_hint === "evidence" && !isReviewer && (
                         <button className="btn" type="button" style={{ marginTop: "0.3rem" }} onClick={runEvidence} disabled={busy}>
@@ -679,11 +690,19 @@ export default function ResearchWorkspacePage() {
                     </button>
                     <button
                       className="btn"
-                      onClick={humanizeSection}
+                      onClick={() => humanizeSection("local")}
                       disabled={busy || !activeSection}
-                      title="Rewrite then review side-by-side before saving"
+                      title="Free local style cleanup, then review before save"
                     >
-                      {busy ? "Working…" : "Humanize"}
+                      Local humanize
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => humanizeSection("live")}
+                      disabled={busy || !activeSection}
+                      title="Live research model rewrite, then review before save"
+                    >
+                      Live humanize
                     </button>
                     <button className="btn" onClick={judgeSection} disabled={busy}>
                       Judge
@@ -719,8 +738,11 @@ export default function ResearchWorkspacePage() {
                   </div>
                   <p className="muted" style={{ margin: 0 }}>
                     {humanizeDraft.used_live
-                      ? `Rewrite used live model (${humanizeDraft.provider || "provider"}).`
-                      : "Rewrite used local rules only."}{" "}
+                      ? `Rewrite mode: live · ${humanizeDraft.provider || "provider"}${
+                          humanizeDraft.model ? ` · ${humanizeDraft.model}` : ""
+                        }.`
+                      : "Rewrite mode: local rules only."}{" "}
+                    {humanizeDraft.note ? `${humanizeDraft.note} ` : ""}
                     Not saved until you Accept. Red = removed, green = added.
                   </p>
                   <div className="grid-3">

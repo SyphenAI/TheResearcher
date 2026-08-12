@@ -157,35 +157,87 @@ def rewrite_text(
 ) -> dict:
     from app.services.llm import chat, list_active_providers
 
-    rewritten = humanize_text(body.text, strength=body.strength)
+    mode = (body.mode or "auto").strip().lower()
+    if mode not in {"local", "live", "auto"}:
+        mode = "auto"
+
+    text = body.text or ""
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text is required to rewrite.")
+
+    local_rewritten = humanize_text(text, strength=body.strength)
+    rewritten = local_rewritten
     used_live = False
     provider = None
+    model = None
+    error = None
     active = list_active_providers(db, purpose="research")
-    if active:
-        provider = active[0]["provider"]
+
+    want_live = mode in {"live", "auto"}
+    if want_live and active:
+        # Prefer first research-enabled token; use its preferred model when set.
+        item = active[0]
+        provider = item["provider"]
+        preferred = (item.get("model") or "").strip() or None
         live = chat(
             db,
             provider=provider,
+            model=preferred,
             system=(
                 "Rewrite for a Gartner-style security analyst voice. Direct, human, "
                 "contractions ok. No em dashes, no double hyphens, no semicolons, no AI cliches. "
-                "Keep facts. Improve clarity for executive readers."
+                "Keep facts and meaning. Improve clarity for executive readers. "
+                "Prefer decision framing, residual risk, and sequenced recommendations when relevant. "
+                "Do not invent sources, CVE counts, or market data."
             ),
-            messages=[{"role": "user", "content": body.text[:12000]}],
+            messages=[{"role": "user", "content": text[:12000]}],
             max_tokens=2500,
-            purpose="rewrite",
+            purpose="rewrite_live" if mode == "live" else "rewrite",
             created_by=user.username,
         )
         if live.content and not live.error:
             rewritten = humanize_text(live.content, strength=body.strength)
             used_live = True
+            model = live.model
+        else:
+            error = live.error or "Live rewrite returned empty content."
+            if mode == "live":
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Live humanize failed via {provider}: {error}. "
+                        "Fix the token/model in Security, or use Local humanize."
+                    ),
+                )
+    elif mode == "live" and not active:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Live humanize needs an active research-enabled token in Security. "
+                "Add one, or use Local humanize."
+            ),
+        )
+
     return {
         "content": rewritten,
-        "original_len": len(body.text),
+        "original_len": len(text),
         "rewritten_len": len(rewritten),
         "requested_by": user.username,
         "used_live": used_live,
         "provider": provider,
+        "model": model,
+        "mode": "live" if used_live else "local",
+        "requested_mode": mode,
+        "error": error,
+        "note": (
+            f"Live rewrite via {provider}" + (f" ({model})" if model else "")
+            if used_live
+            else (
+                "Local rules rewrite only."
+                if mode == "local"
+                else "Local rules rewrite (no research token or live call failed in auto mode)."
+            )
+        ),
     }
 
 

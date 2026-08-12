@@ -310,6 +310,8 @@ class JudgeOut(BaseModel):
 class RewriteRequest(BaseModel):
     text: str
     strength: str = "medium"
+    # local = rules only; live = require research model; auto = live if available else local
+    mode: str = "auto"
 
 
 class ExportRequest(BaseModel):
