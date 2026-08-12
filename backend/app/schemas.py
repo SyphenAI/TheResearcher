@@ -44,12 +44,19 @@ class UserOut(BaseModel):
 class ProjectCreate(BaseModel):
     title: str
     description: str = ""
+    template_key: str = "gartner_panel"
+    evidence_mode: bool = True
+    max_agent_pct: float = 10.0
 
 
 class ProjectUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     status: str | None = None
+    template_key: str | None = None
+    evidence_mode: bool | None = None
+    max_agent_pct: float | None = None
+    publish_ready: bool | None = None
 
 
 class ProjectOut(BaseModel):
@@ -60,6 +67,13 @@ class ProjectOut(BaseModel):
     owner_id: int
     agent_contribution_pct: float
     human_contribution_pct: float
+    template_key: str = "blank"
+    evidence_mode: bool = True
+    max_agent_pct: float = 10.0
+    publish_ready: bool = False
+    archived: bool = False
+    storage_path: str = ""
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     section_count: int = 0
@@ -182,6 +196,9 @@ class AssistantRequest(BaseModel):
     section_id: int | None = None
     mode: str = "research"
     rewrite_human: bool = False
+    providers: list[str] | None = None
+    evidence_mode: bool | None = None
+    multi_agent: bool = True
 
 
 class AssistantResponse(BaseModel):
@@ -189,6 +206,11 @@ class AssistantResponse(BaseModel):
     agent_chars: int
     notes: str = ""
     citations: list[dict[str, str]] = []
+    providers_used: list[str] = []
+    roles: dict[str, Any] = {}
+    used_live: bool = False
+    critique: str = ""
+    red_team: str = ""
 
 
 class ApplyAssistantRequest(BaseModel):
@@ -256,6 +278,8 @@ class RewriteRequest(BaseModel):
 class ExportRequest(BaseModel):
     title: str
     content_md: str
+    project_id: int | None = None
+    force: bool = False
 
 
 class HealthOut(BaseModel):
@@ -269,3 +293,115 @@ class KillSwitchResponse(BaseModel):
     ok: bool
     removed_tokens: int
     message: str
+
+
+class CitationCreate(BaseModel):
+    project_id: int
+    style: str = "apa"
+    title: str
+    url: str = ""
+    author: str = ""
+    year: str = ""
+    notes: str = ""
+
+
+class CitationOut(BaseModel):
+    id: int
+    project_id: int
+    style: str
+    title: str
+    url: str
+    author: str
+    year: str
+    formatted: str
+    notes: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class FrameworkMapCreate(BaseModel):
+    project_id: int
+    framework: str
+    ref_id: str
+    name: str = ""
+    notes: str = ""
+    severity: str = "medium"
+
+
+class FrameworkMapOut(BaseModel):
+    id: int
+    project_id: int
+    framework: str
+    ref_id: str
+    name: str
+    notes: str
+    severity: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PeerReviewCreate(BaseModel):
+    project_id: int
+    section_id: int | None = None
+    comments: str
+    overall_score: float = 0.0
+    status: str = "open"
+
+
+class PeerReviewUpdate(BaseModel):
+    comments: str | None = None
+    overall_score: float | None = None
+    status: str | None = None
+
+
+class PeerReviewOut(BaseModel):
+    id: int
+    project_id: int
+    section_id: int | None
+    reviewer: str
+    status: str
+    comments: str
+    overall_score: float
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ControlItemCreate(BaseModel):
+    project_id: int
+    pack_id: str = ""
+    control_name: str
+    vendor: str = ""
+    status: str = "unknown"
+    notes: str = ""
+    residual_risk: str = "medium"
+
+
+class ControlItemOut(BaseModel):
+    id: int
+    project_id: int
+    pack_id: str
+    control_name: str
+    vendor: str
+    status: str
+    notes: str
+    residual_risk: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DiagramRequest(BaseModel):
+    kind: str = "attack"
+    title: str = "Attack path"
+    project_id: int | None = None
+    section_id: int | None = None
+    text: str = ""
+
+
+class EvidenceRequest(BaseModel):
+    text: str
+    project_id: int | None = None

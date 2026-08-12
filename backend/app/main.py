@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine
-from app.routers import auth, health, projects, research, secrets
+from app.routers import auth, health, projects, research, secrets, settings, workspace
+from app.services.migrate import ensure_schema
 from app.services.startup import ensure_seed_data, log_startup, run_self_check
 
 logger = logging.getLogger("theresearcher")
@@ -22,9 +23,11 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(_: FastAPI):
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    (settings.data_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+    from app.services.storage_paths import storage_root
 
-    Base.metadata.create_all(bind=engine)
+    storage_root()  # storage/projects, storage/archive, storage/tmp
+
+    ensure_schema(engine)
     checks = run_self_check()
     logger.info("Startup self-check: %s", checks)
 
@@ -40,8 +43,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="TheResearcher",
-    description="Local research agent for Security Operations teams",
-    version="0.1.0-preprod",
+    description=(
+        "Local research agent for Gartner-style SecOps analysis: "
+        "Offensive Security, Exposure Management, Vulnerability Management."
+    ),
+    version="0.2.0-preprod",
     lifespan=lifespan,
 )
 
@@ -60,6 +66,8 @@ app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(research.router)
 app.include_router(secrets.router)
+app.include_router(settings.router)
+app.include_router(workspace.router)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 if STATIC_DIR.exists():

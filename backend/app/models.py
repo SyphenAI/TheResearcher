@@ -50,6 +50,13 @@ class Project(Base):
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     agent_contribution_pct: Mapped[float] = mapped_column(Float, default=0.0)
     human_contribution_pct: Mapped[float] = mapped_column(Float, default=100.0)
+    template_key: Mapped[str] = mapped_column(String(64), default="blank")
+    evidence_mode: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_agent_pct: Mapped[float] = mapped_column(Float, default=10.0)
+    publish_ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    storage_path: Mapped[str] = mapped_column(String(512), default="")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -63,6 +70,18 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     artifacts: Mapped[list[Artifact]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    citations: Mapped[list[Citation]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    framework_maps: Mapped[list[FrameworkMapping]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    peer_reviews: Mapped[list[PeerReview]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    control_reviews: Mapped[list[ControlReviewItem]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -172,3 +191,69 @@ class JudgeResult(Base):
     overall_score: Mapped[float] = mapped_column(Float, default=0.0)
     created_by: Mapped[str] = mapped_column(String(64), default="researcher")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Citation(Base):
+    __tablename__ = "citations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    style: Mapped[str] = mapped_column(String(16), default="apa")
+    title: Mapped[str] = mapped_column(String(512), default="")
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    author: Mapped[str] = mapped_column(String(255), default="")
+    year: Mapped[str] = mapped_column(String(32), default="")
+    formatted: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="citations")
+
+
+class FrameworkMapping(Base):
+    __tablename__ = "framework_mappings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    framework: Mapped[str] = mapped_column(String(32), default="mitre")  # mitre | stride
+    ref_id: Mapped[str] = mapped_column(String(64), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    severity: Mapped[str] = mapped_column(String(32), default="medium")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="framework_maps")
+
+
+class PeerReview(Base):
+    __tablename__ = "peer_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    section_id: Mapped[int | None] = mapped_column(ForeignKey("research_sections.id"), nullable=True)
+    reviewer: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(32), default="open")  # open|accepted|rejected
+    comments: Mapped[str] = mapped_column(Text, default="")
+    overall_score: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    project: Mapped[Project] = relationship(back_populates="peer_reviews")
+
+
+class ControlReviewItem(Base):
+    __tablename__ = "control_review_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    pack_id: Mapped[str] = mapped_column(String(64), default="")
+    control_name: Mapped[str] = mapped_column(String(255), default="")
+    vendor: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(32), default="unknown")  # met|partial|gap|unknown
+    notes: Mapped[str] = mapped_column(Text, default="")
+    residual_risk: Mapped[str] = mapped_column(String(32), default="medium")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="control_reviews")

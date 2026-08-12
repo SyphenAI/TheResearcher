@@ -6,12 +6,26 @@ TheResearcher_dev_pat.txt.txt
 .env
 .env.*
 !.env.example
+Senior Director*.txt
 
 # Runtime data (local only)
 data/*
 !data/.gitkeep
 *.db
 *.sqlite3
+
+# Local file storage (uploads, exports, archives). Keep folder, ignore contents.
+storage/*
+!storage/.gitkeep
+!storage/projects/
+!storage/archive/
+!storage/tmp/
+storage/projects/*
+!storage/projects/.gitkeep
+storage/archive/*
+!storage/archive/.gitkeep
+storage/tmp/*
+!storage/tmp/.gitkeep
 
 # Python
 __pycache__/

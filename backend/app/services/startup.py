@@ -86,42 +86,47 @@ def ensure_seed_data(db: Session) -> None:
 
     project_count = db.query(Project).count()
     if project_count == 0 and admin:
+        from app.services.frameworks_data import PROJECT_TEMPLATES
+        from app.services.refs_cache import refs_path
+
+        refs_path()  # ensure offline refs cache exists
+        template = PROJECT_TEMPLATES["gartner_panel"]
         project = Project(
-            title="Sample: Exposure Management Baseline",
-            description=(
-                "Starter project for Offensive Security, Exposure Management, "
-                "and Vulnerability Management research."
-            ),
+            title=template["title"],
+            description=template["description"],
             status="active",
             owner_id=admin.id,
             agent_contribution_pct=0.0,
             human_contribution_pct=100.0,
+            template_key="gartner_panel",
+            evidence_mode=True,
+            max_agent_pct=10.0,
+            publish_ready=False,
         )
         db.add(project)
         db.flush()
-        defaults = [
-            ("Scope and Objectives", 0),
-            ("Threat Landscape (MITRE / STRIDE)", 1),
-            ("Control and SaaS Tool Review", 2),
-            ("Findings and Recommendations", 3),
-            ("References", 4),
-        ]
-        for title, order in defaults:
+        for idx, sec in enumerate(template["section_defs"]):
             db.add(
                 ResearchSection(
                     project_id=project.id,
-                    title=title,
-                    prompt="",
-                    content_md=f"# {title}\n\n_Start drafting here._\n",
-                    sort_order=order,
+                    title=sec["title"],
+                    prompt=sec.get("prompt", ""),
+                    content_md=sec.get("seed") or f"# {sec['title']}\n\n",
+                    sort_order=idx,
                     agent_chars=0,
                     human_chars=0,
                 )
             )
-        log_security_event(db, actor="system", action="seed_project", detail="sample project")
+        log_security_event(db, actor="system", action="seed_project", detail="gartner panel")
 
-    artifacts_dir = settings.data_dir / "artifacts"
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    from app.services.storage_paths import project_dir, storage_root
+
+    storage_root()
+    # Ensure any active projects have a local topic folder under storage/projects/
+    for proj in db.query(Project).filter(Project.archived.is_(False)).all():
+        path = project_dir(proj.id, proj.title, create=True)
+        if not getattr(proj, "storage_path", None):
+            proj.storage_path = str(path)
     db.commit()
 
 

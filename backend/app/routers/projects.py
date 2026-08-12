@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
@@ -20,14 +21,22 @@ from app.schemas import (
     TaskOut,
     TaskUpdate,
 )
+from app.services.storage_paths import (
+    archive_project_folder,
+    list_archived_folders,
+    project_dir,
+    restore_project_folder,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-def _get_project(db: Session, project_id: int) -> Project:
+def _get_project(db: Session, project_id: int, *, include_archived: bool = False) -> Project:
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    if not include_archived and getattr(project, "archived", False):
+        raise HTTPException(status_code=404, detail="Project is archived")
     return project
 
 
@@ -72,6 +81,13 @@ def _serialize_project(db: Session, project: Project) -> ProjectOut:
         owner_id=project.owner_id,
         agent_contribution_pct=project.agent_contribution_pct,
         human_contribution_pct=project.human_contribution_pct,
+        template_key=getattr(project, "template_key", None) or "blank",
+        evidence_mode=bool(getattr(project, "evidence_mode", True)),
+        max_agent_pct=float(getattr(project, "max_agent_pct", 10.0) or 10.0),
+        publish_ready=bool(getattr(project, "publish_ready", False)),
+        archived=bool(getattr(project, "archived", False)),
+        storage_path=getattr(project, "storage_path", "") or "",
+        archived_at=getattr(project, "archived_at", None),
         created_at=project.created_at,
         updated_at=project.updated_at,
         section_count=section_count,
@@ -103,8 +119,31 @@ def list_projects(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> list[ProjectOut]:
-    rows = db.query(Project).order_by(Project.updated_at.desc()).all()
+    rows = (
+        db.query(Project)
+        .filter(Project.archived.is_(False))
+        .order_by(Project.updated_at.desc())
+        .all()
+    )
     return [_serialize_project(db, p) for p in rows]
+
+
+@router.get("/archived")
+def list_archived_projects(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    rows = (
+        db.query(Project)
+        .filter(Project.archived.is_(True))
+        .order_by(Project.archived_at.desc().nullslast(), Project.updated_at.desc())
+        .all()
+    )
+    folders = {f.get("project_id"): f for f in list_archived_folders()}
+    return {
+        "projects": [_serialize_project(db, p) for p in rows],
+        "storage_folders": list(folders.values()),
+    }
 
 
 @router.post("", response_model=ProjectOut, status_code=201)
@@ -113,25 +152,63 @@ def create_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ProjectOut:
+    from app.services.frameworks_data import PROJECT_TEMPLATES
+
+    from app.services.app_settings import load_app_settings
+
+    rules = load_app_settings()
+    key = body.template_key or rules.get("default_template_key") or "gartner_panel"
+    template = PROJECT_TEMPLATES.get(key) or PROJECT_TEMPLATES["gartner_panel"]
+    section_defs = template.get("section_defs")
+    evidence_mode = (
+        body.evidence_mode
+        if body.evidence_mode is not None
+        else bool(rules.get("default_evidence_mode", True))
+    )
+    max_agent = (
+        body.max_agent_pct
+        if body.max_agent_pct is not None
+        else float(rules.get("max_agent_pct", 10.0))
+    )
     project = Project(
-        title=body.title,
-        description=body.description,
+        title=body.title or template["title"],
+        description=body.description or template.get("description", ""),
         owner_id=user.id,
         status="active",
+        template_key=key,
+        evidence_mode=evidence_mode,
+        max_agent_pct=max_agent,
+        publish_ready=False,
+        archived=False,
     )
     db.add(project)
     db.flush()
-    for idx, title in enumerate(
-        ["Overview", "Analysis", "Findings", "Recommendations", "References"]
-    ):
-        db.add(
-            ResearchSection(
-                project_id=project.id,
-                title=title,
-                content_md=f"# {title}\n\n",
-                sort_order=idx,
+    if section_defs:
+        for idx, sec in enumerate(section_defs):
+            db.add(
+                ResearchSection(
+                    project_id=project.id,
+                    title=sec["title"],
+                    prompt=sec.get("prompt", ""),
+                    content_md=sec.get("seed") or f"# {sec['title']}\n\n",
+                    sort_order=idx,
+                )
             )
-        )
+    else:
+        for idx, title in enumerate(template["sections"]):
+            db.add(
+                ResearchSection(
+                    project_id=project.id,
+                    title=title,
+                    content_md=f"# {title}\n\n",
+                    sort_order=idx,
+                )
+            )
+    db.commit()
+    db.refresh(project)
+    # Local storage folder for this research topic (uploads/exports stay under tool root)
+    path = project_dir(project.id, project.title, create=True)
+    project.storage_path = str(path)
     db.commit()
     db.refresh(project)
     return _serialize_project(db, project)
@@ -161,18 +238,54 @@ def update_project(
     return _serialize_project(db, project)
 
 
-@router.delete("/{project_id}", status_code=204)
+@router.delete("/{project_id}")
 def delete_project(
     project_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> Response:
+) -> dict:
+    """Soft-delete: hide from dashboard and move storage into storage/archive/."""
     project = _get_project(db, project_id)
     if user.role != "admin" and project.owner_id != user.id:
         raise HTTPException(status_code=403, detail="Not allowed to delete this project")
-    db.delete(project)
+
+    archive_path = archive_project_folder(project.id, project.title)
+    project.archived = True
+    project.status = "archived"
+    project.archived_at = datetime.now(timezone.utc)
+    project.storage_path = str(archive_path)
+    project.publish_ready = False
     db.commit()
-    return Response(status_code=204)
+    return {
+        "ok": True,
+        "project_id": project.id,
+        "archived": True,
+        "storage_path": str(archive_path),
+        "message": "Project removed from dashboard and archived under storage/archive/.",
+    }
+
+
+@router.post("/{project_id}/restore", response_model=ProjectOut)
+def restore_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProjectOut:
+    project = _get_project(db, project_id, include_archived=True)
+    if not getattr(project, "archived", False):
+        raise HTTPException(status_code=400, detail="Project is not archived")
+    if user.role != "admin" and project.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to restore this project")
+
+    restored = restore_project_folder(project.id)
+    path = restored or project_dir(project.id, project.title, create=True)
+    project.archived = False
+    project.status = "active"
+    project.archived_at = None
+    project.storage_path = str(path)
+    db.commit()
+    db.refresh(project)
+    return _serialize_project(db, project)
 
 
 @router.get("/{project_id}/sections", response_model=list[SectionOut])

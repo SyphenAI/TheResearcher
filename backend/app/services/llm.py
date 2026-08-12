@@ -1,0 +1,254 @@
+"""Multi-provider LLM client (OpenAI, Anthropic, xAI/Grok, Google)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+import httpx
+from sqlalchemy.orm import Session
+
+from app.models import ApiToken
+from app.security import decrypt_secret
+
+PROVIDER_DEFAULTS = {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "chat_path": "/chat/completions",
+        "default_model": "gpt-4o-mini",
+        "style": "openai",
+    },
+    "anthropic": {
+        "base_url": "https://api.anthropic.com/v1",
+        "chat_path": "/messages",
+        "default_model": "claude-sonnet-4-20250514",
+        "style": "anthropic",
+    },
+    "xai": {
+        "base_url": "https://api.x.ai/v1",
+        "chat_path": "/chat/completions",
+        "default_model": "grok-2-latest",
+        "style": "openai",
+    },
+    "google": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "chat_path": "/models/{model}:generateContent",
+        "default_model": "gemini-2.0-flash",
+        "style": "google",
+    },
+    "azure_openai": {
+        "base_url": "",
+        "chat_path": "/chat/completions",
+        "default_model": "gpt-4o-mini",
+        "style": "openai",
+    },
+}
+
+
+@dataclass
+class LLMResult:
+    content: str
+    provider: str
+    model: str
+    used_live: bool
+    error: str | None = None
+
+
+def list_active_providers(db: Session) -> list[dict[str, Any]]:
+    rows = (
+        db.query(ApiToken)
+        .filter(ApiToken.is_active.is_(True))
+        .order_by(ApiToken.provider.asc(), ApiToken.label.asc())
+        .all()
+    )
+    out = []
+    for row in rows:
+        meta = PROVIDER_DEFAULTS.get(row.provider, {})
+        out.append(
+            {
+                "id": row.id,
+                "provider": row.provider,
+                "label": row.label,
+                "default_model": meta.get("default_model", "default"),
+                "style": meta.get("style", "openai"),
+            }
+        )
+    return out
+
+
+def get_provider_token(db: Session, provider: str, label: str = "default") -> ApiToken | None:
+    provider = provider.strip().lower()
+    row = (
+        db.query(ApiToken)
+        .filter(
+            ApiToken.provider == provider,
+            ApiToken.label == label,
+            ApiToken.is_active.is_(True),
+        )
+        .first()
+    )
+    if row:
+        return row
+    # fall back to any active label for provider
+    return (
+        db.query(ApiToken)
+        .filter(ApiToken.provider == provider, ApiToken.is_active.is_(True))
+        .order_by(ApiToken.id.asc())
+        .first()
+    )
+
+
+def chat(
+    db: Session,
+    *,
+    provider: str,
+    messages: list[dict[str, str]],
+    model: str | None = None,
+    label: str = "default",
+    temperature: float = 0.4,
+    max_tokens: int = 2200,
+    system: str | None = None,
+) -> LLMResult:
+    provider = provider.strip().lower()
+    meta = PROVIDER_DEFAULTS.get(provider)
+    if not meta:
+        return LLMResult("", provider, model or "", False, f"Unknown provider: {provider}")
+
+    token_row = get_provider_token(db, provider, label)
+    if not token_row:
+        return LLMResult(
+            "",
+            provider,
+            model or meta["default_model"],
+            False,
+            f"No active token for {provider}. Add one in Security.",
+        )
+
+    api_key = decrypt_secret(token_row.encrypted_value)
+    use_model = model or meta["default_model"]
+    style = meta["style"]
+
+    try:
+        if style == "anthropic":
+            content = _anthropic_chat(api_key, meta, use_model, messages, system, max_tokens, temperature)
+        elif style == "google":
+            content = _google_chat(api_key, meta, use_model, messages, system, max_tokens, temperature)
+        else:
+            content = _openai_style_chat(
+                api_key, meta, use_model, messages, system, max_tokens, temperature, provider
+            )
+        token_row.last_used_at = datetime.now(timezone.utc)
+        db.commit()
+        return LLMResult(content=content.strip(), provider=provider, model=use_model, used_live=True)
+    except Exception as exc:  # noqa: BLE001
+        return LLMResult(
+            content="",
+            provider=provider,
+            model=use_model,
+            used_live=False,
+            error=str(exc),
+        )
+
+
+def _openai_style_chat(
+    api_key: str,
+    meta: dict[str, Any],
+    model: str,
+    messages: list[dict[str, str]],
+    system: str | None,
+    max_tokens: int,
+    temperature: float,
+    provider: str,
+) -> str:
+    base = meta["base_url"].rstrip("/")
+    if not base:
+        raise ValueError(f"{provider} base URL is not configured")
+    payload_messages = []
+    if system:
+        payload_messages.append({"role": "system", "content": system})
+    payload_messages.extend(messages)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": model,
+        "messages": payload_messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    with httpx.Client(timeout=90.0) as client:
+        resp = client.post(f"{base}{meta['chat_path']}", headers=headers, json=body)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"{provider} API {resp.status_code}: {resp.text[:400]}")
+        data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
+def _anthropic_chat(
+    api_key: str,
+    meta: dict[str, Any],
+    model: str,
+    messages: list[dict[str, str]],
+    system: str | None,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"],
+    }
+    if system:
+        body["system"] = system
+    with httpx.Client(timeout=90.0) as client:
+        resp = client.post(
+            f"{meta['base_url'].rstrip('/')}{meta['chat_path']}",
+            headers=headers,
+            json=body,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"anthropic API {resp.status_code}: {resp.text[:400]}")
+        data = resp.json()
+    parts = data.get("content") or []
+    return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+
+
+def _google_chat(
+    api_key: str,
+    meta: dict[str, Any],
+    model: str,
+    messages: list[dict[str, str]],
+    system: str | None,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    contents = []
+    for m in messages:
+        role = "user" if m["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": m["content"]}]})
+    body: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
+    }
+    if system:
+        body["systemInstruction"] = {"parts": [{"text": system}]}
+    path = meta["chat_path"].format(model=model)
+    url = f"{meta['base_url'].rstrip('/')}{path}?key={api_key}"
+    with httpx.Client(timeout=90.0) as client:
+        resp = client.post(url, json=body)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"google API {resp.status_code}: {resp.text[:400]}")
+        data = resp.json()
+    cands = data.get("candidates") or []
+    if not cands:
+        return ""
+    parts = cands[0].get("content", {}).get("parts") or []
+    return "".join(p.get("text", "") for p in parts)

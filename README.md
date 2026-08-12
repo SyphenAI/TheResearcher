@@ -84,8 +84,10 @@ Environment variables (see `.env.example`):
 
 Persistent volume mapping:
 
-- Host: `./data`
-- Container: `/app/data` (SQLite DB, artifacts, encrypted tokens)
+- Host: `./data` → Container `/app/data` (SQLite DB, app settings, encrypted tokens)
+- Host: `./storage` → Container `/app/storage` (per-project uploads, exports, archives)
+
+`storage/` contents are gitignored. Only empty folder placeholders are tracked.
 
 The app is designed to stay inside its own project directory.
 

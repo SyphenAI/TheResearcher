@@ -10,7 +10,7 @@ from app.schemas import HealthOut
 from app.services.startup import run_self_check
 
 router = APIRouter(tags=["health"])
-VERSION = "0.1.0-preprod"
+VERSION = "0.2.0-preprod"
 
 
 @router.get("/api/health", response_model=HealthOut)

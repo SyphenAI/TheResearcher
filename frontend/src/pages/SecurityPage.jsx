@@ -20,6 +20,7 @@ export default function SecurityPage() {
   const [audit, setAudit] = useState([]);
   const [auditNote, setAuditNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [backups, setBackups] = useState([]);
 
   async function load() {
     const [p, t] = await Promise.all([
@@ -36,6 +37,12 @@ export default function SecurityPage() {
       } catch {
         setAudit([]);
         setAuditNote("");
+      }
+      try {
+        const b = await api("/api/workspace/backups");
+        setBackups(b.backups || []);
+      } catch {
+        setBackups([]);
       }
     }
   }
@@ -342,6 +349,66 @@ export default function SecurityPage() {
           </tbody>
         </table>
       </div>
+
+      {user?.role === "admin" && (
+        <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Backup / restore</h2>
+          <p className="muted" style={{ margin: 0 }}>
+            Local zip of DB, artifacts, and refs inside the project data directory.
+          </p>
+          <div className="row">
+            <button
+              className="btn primary"
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const res = await api("/api/workspace/backups", { method: "POST" });
+                  setMessage(`Backup created: ${res.filename}`);
+                  await load();
+                } catch (err) {
+                  setError(err.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Create backup
+            </button>
+          </div>
+          <ul className="muted">
+            {backups.map((b) => (
+              <li key={b.filename}>
+                {b.filename} ({b.size_bytes} bytes){" "}
+                <button
+                  className="btn ghost"
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    if (!window.confirm(`Restore ${b.filename}? Current DB is copied aside first.`)) return;
+                    setBusy(true);
+                    try {
+                      const res = await api(
+                        `/api/workspace/backups/restore?filename=${encodeURIComponent(b.filename)}`,
+                        { method: "POST" }
+                      );
+                      setMessage(res.message || "Restored. Restart container recommended.");
+                    } catch (err) {
+                      setError(err.message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Restore
+                </button>
+              </li>
+            ))}
+            {!backups.length && <li>No backups yet.</li>}
+          </ul>
+        </div>
+      )}
 
       {user?.role === "admin" && (
         <div className="panel stack">
