@@ -137,7 +137,41 @@ def _anthropic_omits_sampling(model: str) -> bool:
 def _is_temperature_deprecated_error(err: str) -> bool:
     text = (err or "").lower()
     return "temperature" in text and (
-        "deprecated" in text or "not supported" in text or "invalid_request" in text
+        "deprecated" in text
+        or "not supported" in text
+        or "unsupported_parameter" in text
+        or "invalid_request" in text
+    )
+
+
+def _openai_uses_max_completion_tokens(model: str) -> bool:
+    """GPT-5 / o-series models require max_completion_tokens instead of max_tokens."""
+    m = (model or "").lower()
+    if m.startswith(("o1", "o3", "o4")):
+        return True
+    if "gpt-5" in m:
+        return True
+    if any(token in m for token in ("reasoning", "o1-", "o3-", "o4-")):
+        return True
+    return False
+
+
+def _openai_omits_temperature(model: str) -> bool:
+    """Reasoning / GPT-5 family often reject temperature."""
+    m = (model or "").lower()
+    if m.startswith(("o1", "o3", "o4")):
+        return True
+    if "gpt-5" in m:
+        return True
+    return False
+
+
+def _is_max_tokens_unsupported_error(err: str) -> bool:
+    text = (err or "").lower()
+    return "max_tokens" in text and (
+        "max_completion_tokens" in text
+        or "unsupported_parameter" in text
+        or "not supported" in text
     )
 
 
@@ -427,18 +461,41 @@ def _openai_style_chat(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    body = {
-        "model": model,
-        "messages": payload_messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    with httpx.Client(timeout=90.0) as client:
-        resp = client.post(f"{base}{meta['chat_path']}", headers=headers, json=body)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"{provider} API {resp.status_code}: {resp.text[:400]}")
-        data = resp.json()
-    return data["choices"][0]["message"]["content"]
+
+    use_completion_tokens = _openai_uses_max_completion_tokens(model)
+    include_temperature = not _openai_omits_temperature(model)
+
+    def _post(*, completion_tokens: bool, with_temperature: bool) -> httpx.Response:
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": payload_messages,
+        }
+        if completion_tokens:
+            body["max_completion_tokens"] = max_tokens
+        else:
+            body["max_tokens"] = max_tokens
+        if with_temperature:
+            body["temperature"] = temperature
+        with httpx.Client(timeout=90.0) as client:
+            return client.post(f"{base}{meta['chat_path']}", headers=headers, json=body)
+
+    resp = _post(completion_tokens=use_completion_tokens, with_temperature=include_temperature)
+    # Adaptive retries for newer OpenAI param rules (GPT-5 / o-series, unknown IDs).
+    if resp.status_code >= 400 and _is_max_tokens_unsupported_error(resp.text):
+        use_completion_tokens = True
+        resp = _post(completion_tokens=True, with_temperature=include_temperature)
+    if resp.status_code >= 400 and _is_temperature_deprecated_error(resp.text):
+        include_temperature = False
+        resp = _post(completion_tokens=use_completion_tokens, with_temperature=False)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"{provider} API {resp.status_code}: {resp.text[:400]}")
+    data = resp.json()
+    message = (data.get("choices") or [{}])[0].get("message") or {}
+    content = message.get("content")
+    if content is None:
+        # Some reasoning models return empty content with refusal/tool fields.
+        content = message.get("refusal") or ""
+    return str(content)
 
 
 def _anthropic_chat(
