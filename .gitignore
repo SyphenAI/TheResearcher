@@ -1,0 +1,39 @@
+﻿# Secrets and local credentials
+TheResearcher_dev_pat.txt
+TheResearcher_dev_pat.txt.txt
+*.pat
+*.pem
+.env
+.env.*
+!.env.example
+
+# Runtime data (local only)
+data/*
+!data/.gitkeep
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/node_modules/
+*.log
+npm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker-cache/

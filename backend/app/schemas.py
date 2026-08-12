@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    must_change_password: bool = False
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=8)
+    display_name: str = ""
+    role: str = "researcher"
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    role: str
+    must_change_password: bool
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ProjectCreate(BaseModel):
+    title: str
+    description: str = ""
+
+
+class ProjectUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None
+
+
+class ProjectOut(BaseModel):
+    id: int
+    title: str
+    description: str
+    status: str
+    owner_id: int
+    agent_contribution_pct: float
+    human_contribution_pct: float
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SectionCreate(BaseModel):
+    title: str
+    prompt: str = ""
+    content_md: str = ""
+    sort_order: int = 0
+
+
+class SectionUpdate(BaseModel):
+    title: str | None = None
+    prompt: str | None = None
+    content_md: str | None = None
+    sort_order: int | None = None
+    agent_chars: int | None = None
+    human_chars: int | None = None
+
+
+class SectionOut(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    prompt: str
+    content_md: str
+    sort_order: int
+    agent_chars: int
+    human_chars: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TaskCreate(BaseModel):
+    title: str
+    description: str = ""
+    status: str = "todo"
+    priority: str = "medium"
+    assignee_id: int | None = None
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    assignee_id: int | None = None
+
+
+class TaskOut(BaseModel):
+    id: int
+    project_id: int
+    assignee_id: int | None
+    title: str
+    description: str
+    status: str
+    priority: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ArtifactOut(BaseModel):
+    id: int
+    project_id: int
+    filename: str
+    original_name: str
+    content_type: str
+    size_bytes: int
+    notes: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TokenCreate(BaseModel):
+    provider: str
+    label: str = "default"
+    value: str
+    is_active: bool = True
+
+
+class TokenOut(BaseModel):
+    id: int
+    provider: str
+    label: str
+    is_active: bool
+    masked_value: str
+    last_used_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssistantRequest(BaseModel):
+    prompt: str
+    section_id: int | None = None
+    mode: str = "research"
+    rewrite_human: bool = False
+
+
+class AssistantResponse(BaseModel):
+    content: str
+    agent_chars: int
+    notes: str = ""
+    citations: list[dict[str, str]] = []
+
+
+class ApplyAssistantRequest(BaseModel):
+    section_id: int
+    content: str
+    mark_as_agent: bool = True
+
+
+class AiCheckRequest(BaseModel):
+    text: str
+    source_label: str = "paste"
+
+
+class AiCheckOut(BaseModel):
+    id: int
+    source_label: str
+    ai_pct: float
+    human_pct: float
+    signals: dict[str, Any]
+    recommendations: list[str]
+    created_at: datetime
+
+
+class JudgeRequest(BaseModel):
+    text: str
+    project_id: int | None = None
+    section_id: int | None = None
+    criteria: list[str] = Field(
+        default_factory=lambda: [
+            "accuracy",
+            "relevance",
+            "originality",
+            "ethics",
+            "clarity",
+        ]
+    )
+
+
+class JudgeOut(BaseModel):
+    id: int
+    overall_score: float
+    scores: dict[str, float]
+    feedback: str
+    created_at: datetime
+
+
+class RewriteRequest(BaseModel):
+    text: str
+    strength: str = "medium"
+
+
+class ExportRequest(BaseModel):
+    title: str
+    content_md: str
+
+
+class HealthOut(BaseModel):
+    status: str
+    checks: dict[str, Any]
+    version: str
+    app_env: str
+
+
+class KillSwitchResponse(BaseModel):
+    ok: bool
+    removed_tokens: int
+    message: str

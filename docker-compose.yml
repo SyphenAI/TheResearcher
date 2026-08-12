@@ -1,0 +1,27 @@
+services:
+  theresearcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: theresearcher:pre-prod
+    container_name: theresearcher
+    ports:
+      - "50080:50080"
+    environment:
+      APP_ENV: pre-prod
+      DATA_DIR: /app/data
+      SECRET_KEY: ${SECRET_KEY:-local-dev-change-me-to-a-long-random-value}
+      TOKEN_FERNET_KEY: ${TOKEN_FERNET_KEY:-}
+      CORS_ORIGINS: "*"
+      DEFAULT_ADMIN_USERNAME: researcher
+      DEFAULT_ADMIN_PASSWORD: password
+    volumes:
+      # Persist DB, artifacts, and encrypted secrets inside project data only
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:50080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 25s

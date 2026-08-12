@@ -1,0 +1,16 @@
+.git
+.venv
+backend/.venv
+**/__pycache__
+**/*.pyc
+node_modules
+frontend/node_modules
+frontend/dist
+data/*
+!data/.gitkeep
+TheResearcher_dev_pat.txt
+TheResearcher_dev_pat.txt.txt
+.env
+*.log
+.idea
+.vscode
