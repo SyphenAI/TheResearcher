@@ -45,7 +45,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="TheResearcher",
     description=(
-        "Local research agent for Gartner-style SecOps analysis: "
+        "Local research agent for Security Operations: "
         "Offensive Security, Exposure Management, Vulnerability Management."
     ),
     version="0.2.0-preprod",

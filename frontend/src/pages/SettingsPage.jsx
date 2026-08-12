@@ -9,7 +9,7 @@ const EMPTY = {
   enforce_publish_gate: true,
   allow_force_export: true,
   default_evidence_mode: true,
-  default_template_key: "gartner_panel",
+  default_template_key: "blank",
   require_citations_for_publish: true,
   humanize_before_export_hint: true,
 };
@@ -182,7 +182,7 @@ export default function SettingsPage() {
           >
             {(templates.length
               ? templates
-              : [{ key: "gartner_panel", title: "Gartner panel" }]
+              : [{ key: "blank", title: "Blank research" }]
             ).map((t) => (
               <option key={t.key} value={t.key}>
                 {t.title}

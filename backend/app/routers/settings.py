@@ -21,7 +21,7 @@ class AppSettingsOut(BaseModel):
     enforce_publish_gate: bool = True
     allow_force_export: bool = True
     default_evidence_mode: bool = True
-    default_template_key: str = "gartner_panel"
+    default_template_key: str = "blank"
     require_citations_for_publish: bool = True
     humanize_before_export_hint: bool = True
 

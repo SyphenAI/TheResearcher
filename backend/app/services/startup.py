@@ -90,34 +90,35 @@ def ensure_seed_data(db: Session) -> None:
         from app.services.refs_cache import refs_path
 
         refs_path()  # ensure offline refs cache exists
-        template = PROJECT_TEMPLATES["gartner_panel"]
+        template = PROJECT_TEMPLATES["blank"]
         project = Project(
-            title=template["title"],
+            title="Sample research project",
             description=template["description"],
             status="active",
             owner_id=admin.id,
             agent_contribution_pct=0.0,
             human_contribution_pct=100.0,
-            template_key="gartner_panel",
+            template_key="blank",
             evidence_mode=True,
             max_agent_pct=10.0,
             publish_ready=False,
+            archived=False,
         )
         db.add(project)
         db.flush()
-        for idx, sec in enumerate(template["section_defs"]):
+        for idx, title in enumerate(template["sections"]):
             db.add(
                 ResearchSection(
                     project_id=project.id,
-                    title=sec["title"],
-                    prompt=sec.get("prompt", ""),
-                    content_md=sec.get("seed") or f"# {sec['title']}\n\n",
+                    title=title,
+                    prompt="",
+                    content_md=f"# {title}\n\n",
                     sort_order=idx,
                     agent_chars=0,
                     human_chars=0,
                 )
             )
-        log_security_event(db, actor="system", action="seed_project", detail="gartner panel")
+        log_security_event(db, actor="system", action="seed_project", detail="sample blank")
 
     from app.services.storage_paths import project_dir, storage_root
 

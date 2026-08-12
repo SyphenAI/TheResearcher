@@ -44,7 +44,7 @@ class UserOut(BaseModel):
 class ProjectCreate(BaseModel):
     title: str
     description: str = ""
-    template_key: str = "gartner_panel"
+    template_key: str = "blank"
     evidence_mode: bool = True
     max_agent_pct: float = 10.0
 

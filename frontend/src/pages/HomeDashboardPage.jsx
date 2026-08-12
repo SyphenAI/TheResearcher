@@ -17,7 +17,7 @@ export default function HomeDashboardPage() {
   const [templates, setTemplates] = useState([]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [templateKey, setTemplateKey] = useState("gartner_panel");
+  const [templateKey, setTemplateKey] = useState("blank");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,11 +46,11 @@ export default function HomeDashboardPage() {
       loadArchived(),
       api("/api/workspace/templates"),
       api("/api/workspace/providers").catch(() => ({ active: [] })),
-      api("/api/settings").catch(() => ({ max_agent_pct: 10, default_template_key: "gartner_panel" })),
+      api("/api/settings").catch(() => ({ max_agent_pct: 10, default_template_key: "blank" })),
     ])
       .then(([, , t, p, s]) => {
         setTemplates(t.templates || []);
-        setTemplateKey(s.default_template_key || t.default || "gartner_panel");
+        setTemplateKey(s.default_template_key || t.default || "blank");
         setProviders(p.active || []);
         setGlobalMaxAgent(s.max_agent_pct ?? 10);
       })
@@ -83,6 +83,8 @@ export default function HomeDashboardPage() {
       liveProviders: providers.length,
     };
   }, [projects, providers, globalMaxAgent]);
+
+  const selectedTemplate = templates.find((t) => t.key === templateKey);
 
   async function startResearch(e) {
     e.preventDefault();
@@ -118,8 +120,7 @@ export default function HomeDashboardPage() {
         <div>
           <h1 style={{ marginBottom: 0 }}>Dashboard</h1>
           <p className="muted" style={{ margin: "0.35rem 0 0" }}>
-            Built for a Gartner Senior Director Analyst panel: Offensive Security, Exposure Management,
-            and Vulnerability Management. Start the panel template or open current work.
+            Pick a topic template for this week's research, or open an existing project.
           </p>
         </div>
       </div>
@@ -178,8 +179,7 @@ export default function HomeDashboardPage() {
             <div className="empty-state">
               <h3>No research yet</h3>
               <p className="muted">
-                Start the Gartner panel template on the right. It opens a 12-section desk mapped to
-                OffSec (PT, BAS, AEV, red/purple), Exposure Management, and Vulnerability Management.
+                Start a new project on the right. Choose a template that matches this week's topic.
               </p>
             </div>
           )}
@@ -295,7 +295,7 @@ export default function HomeDashboardPage() {
         <div className="panel stack">
           <h2 style={{ margin: 0 }}>Start new research</h2>
           <p className="muted" style={{ marginTop: 0 }}>
-            Default template matches the Senior Director Analyst panel interview role.
+            Choose a template from the dropdown based on the topic you are researching this week.
           </p>
           <form className="stack" onSubmit={startResearch}>
             <label>
@@ -303,7 +303,7 @@ export default function HomeDashboardPage() {
               <select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
                 {(templates.length
                   ? templates
-                  : [{ key: "gartner_panel", title: "Gartner Senior Director panel project" }]
+                  : [{ key: "blank", title: "Blank research" }]
                 ).map((t) => (
                   <option key={t.key} value={t.key}>
                     {t.title}
@@ -311,12 +311,20 @@ export default function HomeDashboardPage() {
                 ))}
               </select>
             </label>
+            {selectedTemplate && (
+              <div className="alert ok" style={{ margin: 0 }}>
+                {selectedTemplate.description}
+                <div className="muted" style={{ marginTop: "0.4rem" }}>
+                  {selectedTemplate.sections?.length || 0} sections
+                </div>
+              </div>
+            )}
             <label>
               Research title
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Must-have insights: unifying EM, VM, and OffSec validation"
+                placeholder="e.g. Exposure prioritization for internet-facing SaaS"
                 required
               />
             </label>

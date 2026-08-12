@@ -65,7 +65,7 @@ def templates(_: User = Depends(get_current_user)) -> dict:
             }
             for key, val in PROJECT_TEMPLATES.items()
         ],
-        "default": "gartner_panel",
+        "default": "blank",
     }
 
 

@@ -15,7 +15,7 @@ DEFAULTS: dict[str, Any] = {
     "enforce_publish_gate": True,
     "allow_force_export": True,
     "default_evidence_mode": True,
-    "default_template_key": "gartner_panel",
+    "default_template_key": "blank",
     "require_citations_for_publish": True,
     "humanize_before_export_hint": True,
 }

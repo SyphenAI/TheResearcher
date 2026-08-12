@@ -157,8 +157,8 @@ def create_project(
     from app.services.app_settings import load_app_settings
 
     rules = load_app_settings()
-    key = body.template_key or rules.get("default_template_key") or "gartner_panel"
-    template = PROJECT_TEMPLATES.get(key) or PROJECT_TEMPLATES["gartner_panel"]
+    key = body.template_key or rules.get("default_template_key") or "blank"
+    template = PROJECT_TEMPLATES.get(key) or PROJECT_TEMPLATES["blank"]
     section_defs = template.get("section_defs")
     evidence_mode = (
         body.evidence_mode

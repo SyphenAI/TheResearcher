@@ -59,7 +59,7 @@ function Shell({ children }) {
           <div>
             TheResearcher
             <div className="muted" style={{ fontSize: "0.78rem", fontWeight: 400 }}>
-              Gartner-style SecOps research desk
+              SecOps research desk
             </div>
           </div>
         </div>
