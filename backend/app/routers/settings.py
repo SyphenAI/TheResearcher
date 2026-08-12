@@ -33,6 +33,7 @@ class AppSettingsOut(BaseModel):
     humanize_before_export_hint: bool = True
     semantic_scholar_api_key: str = ""
     openalex_api_key: str = ""
+    follow_topics: list[str] = Field(default_factory=list)
 
 
 class AppSettingsUpdate(BaseModel):
@@ -47,6 +48,7 @@ class AppSettingsUpdate(BaseModel):
     humanize_before_export_hint: bool | None = None
     semantic_scholar_api_key: str | None = None
     openalex_api_key: str | None = None
+    follow_topics: list[str] | None = None
 
 
 @router.get("", response_model=AppSettingsOut)

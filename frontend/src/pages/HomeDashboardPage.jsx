@@ -26,6 +26,8 @@ export default function HomeDashboardPage() {
   const [archived, setArchived] = useState([]);
   const [globalMaxAgent, setGlobalMaxAgent] = useState(10);
   const [searchQ, setSearchQ] = useState("");
+  const [feed, setFeed] = useState(null);
+  const [feedBusy, setFeedBusy] = useState(false);
 
   async function loadProjects() {
     const data = await api("/api/projects");
@@ -41,6 +43,18 @@ export default function HomeDashboardPage() {
     }
   }
 
+  async function loadFeed() {
+    setFeedBusy(true);
+    try {
+      const f = await api("/api/workspace/feed");
+      setFeed(f);
+    } catch {
+      setFeed(null);
+    } finally {
+      setFeedBusy(false);
+    }
+  }
+
   useEffect(() => {
     Promise.all([
       loadProjects(),
@@ -48,6 +62,7 @@ export default function HomeDashboardPage() {
       api("/api/workspace/templates"),
       api("/api/workspace/providers").catch(() => ({ active: [] })),
       api("/api/settings").catch(() => ({ max_agent_pct: 10, default_template_key: "blank" })),
+      loadFeed(),
     ])
       .then(([, , t, p, s]) => {
         setTemplates(t.templates || []);
@@ -135,7 +150,7 @@ export default function HomeDashboardPage() {
           <input
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="Search projects & paper text"
+            placeholder="Search library or open Search for scholar"
             style={{ minWidth: 220 }}
           />
           <button className="btn" type="submit">
@@ -146,6 +161,89 @@ export default function HomeDashboardPage() {
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
+
+      <div className="panel stack">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Research radar</h2>
+            <p className="muted" style={{ margin: "0.25rem 0 0" }}>
+              Latest news and papers for topics you follow. Edit topics in Settings.
+            </p>
+          </div>
+          <div className="row">
+            <button className="btn ghost" type="button" onClick={loadFeed} disabled={feedBusy}>
+              {feedBusy ? "Refreshing…" : "Refresh feed"}
+            </button>
+            <button className="btn" type="button" onClick={() => navigate("/settings")}>
+              Follow topics
+            </button>
+            <button className="btn" type="button" onClick={() => navigate("/search?tab=scholar")}>
+              Scholar search
+            </button>
+          </div>
+        </div>
+        {feed?.topics?.length > 0 && (
+          <div className="row">
+            {feed.topics.map((t) => (
+              <span className="badge" key={t}>
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+        {feed?.message && <p className="muted" style={{ margin: 0 }}>{feed.message}</p>}
+        {!feed?.items?.length && !feedBusy && (
+          <p className="muted">
+            No feed items yet. Add follow topics under Settings, then refresh.
+          </p>
+        )}
+        <div className="stack" style={{ maxHeight: 420, overflow: "auto" }}>
+          {(feed?.items || []).slice(0, 20).map((item, idx) => (
+            <div
+              key={`${item.kind}-${item.url || item.title}-${idx}`}
+              className="panel stack"
+              style={{ padding: "0.6rem" }}
+            >
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong style={{ fontSize: "0.92rem" }}>{item.title}</strong>
+                <span className={`badge ${item.kind === "news" ? "good" : ""}`}>
+                  {item.kind === "news" ? "news" : "paper"}
+                </span>
+              </div>
+              <div className="muted" style={{ fontSize: "0.8rem" }}>
+                {item.topic ? `Topic: ${item.topic} · ` : ""}
+                {item.source || item.provider || ""}
+                {item.published_at ? ` · ${item.published_at}` : ""}
+                {item.cited_by_count ? ` · cited≈${item.cited_by_count}` : ""}
+              </div>
+              {item.snippet && (
+                <div style={{ fontSize: "0.85rem" }}>
+                  {item.snippet.slice(0, 200)}
+                  {item.snippet.length > 200 ? "…" : ""}
+                </div>
+              )}
+              <div className="row">
+                {item.url && (
+                  <a className="btn ghost" href={item.url} target="_blank" rel="noreferrer">
+                    Open
+                  </a>
+                )}
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() =>
+                    navigate(
+                      `/search?tab=scholar&q=${encodeURIComponent(item.topic || item.title || "")}`
+                    )
+                  }
+                >
+                  Search scholar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div className="grid-3">
         <div className="metric">

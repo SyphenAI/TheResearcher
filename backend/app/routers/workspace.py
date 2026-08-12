@@ -241,6 +241,23 @@ def scholar_search(
     )
 
 
+@router.get("/feed")
+def research_topic_feed(
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Dashboard feed: news + papers for follow topics from Settings."""
+    from app.services.app_settings import load_app_settings
+    from app.services.research_feed import build_topic_feed
+
+    rules = load_app_settings()
+    topics = rules.get("follow_topics") or []
+    return build_topic_feed(
+        topics if isinstance(topics, list) else [],
+        semantic_scholar_key=(rules.get("semantic_scholar_api_key") or "").strip() or None,
+        openalex_key=(rules.get("openalex_api_key") or "").strip() or None,
+    )
+
+
 @router.post("/scholar/add-citation", response_model=CitationOut, status_code=201)
 def scholar_add_citation(
     body: dict,

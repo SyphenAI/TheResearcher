@@ -14,6 +14,13 @@ const EMPTY = {
   humanize_before_export_hint: true,
   semantic_scholar_api_key: "",
   openalex_api_key: "",
+  follow_topics: [
+    "offensive security",
+    "exposure management",
+    "vulnerability management",
+    "breach and attack simulation",
+  ],
+  follow_topics_text: "",
 };
 
 const EMPTY_TEMPLATE = {
@@ -46,8 +53,18 @@ export default function SettingsPage() {
       api("/api/settings/defaults"),
       api("/api/settings/templates").catch(() => api("/api/workspace/templates")),
     ]);
-    setForm({ ...EMPTY, ...s });
-    setDefaults({ ...EMPTY, ...d });
+    const follow = Array.isArray(s.follow_topics) ? s.follow_topics : EMPTY.follow_topics;
+    setForm({
+      ...EMPTY,
+      ...s,
+      follow_topics: follow,
+      follow_topics_text: follow.join("\n"),
+    });
+    setDefaults({
+      ...EMPTY,
+      ...d,
+      follow_topics: Array.isArray(d.follow_topics) ? d.follow_topics : EMPTY.follow_topics,
+    });
     const rows = t.templates || [];
     setTemplates(rows);
     if (!selectedKey && rows.length) {
@@ -87,11 +104,24 @@ export default function SettingsPage() {
     setError("");
     setMessage("");
     try {
+      const follow = String(form.follow_topics_text || "")
+        .split(/[\n,;]+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 2)
+        .slice(0, 12);
+      const { follow_topics_text, ...rest } = form;
+      const payload = { ...rest, follow_topics: follow };
       const saved = await api("/api/settings", {
         method: "PUT",
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
-      setForm({ ...EMPTY, ...saved });
+      const topics = Array.isArray(saved.follow_topics) ? saved.follow_topics : follow;
+      setForm({
+        ...EMPTY,
+        ...saved,
+        follow_topics: topics,
+        follow_topics_text: topics.join("\n"),
+      });
       setMessage("Global rules saved.");
     } catch (err) {
       setError(err.message);
@@ -362,6 +392,22 @@ export default function SettingsPage() {
             disabled={readOnly}
             onChange={(e) => setField("openalex_api_key", e.target.value)}
             placeholder="Optional free key"
+          />
+        </label>
+
+        <h2>Topics to follow (dashboard feed)</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          One topic per line. The dashboard pulls world news (Google News RSS) and recent papers for
+          these themes so you can stay current outside any single project. Max 8 used per refresh.
+        </p>
+        <label>
+          Follow topics
+          <textarea
+            style={{ minHeight: 120 }}
+            value={form.follow_topics_text || ""}
+            disabled={readOnly}
+            onChange={(e) => setField("follow_topics_text", e.target.value)}
+            placeholder={"offensive security\nexposure management\nvulnerability management"}
           />
         </label>
 
