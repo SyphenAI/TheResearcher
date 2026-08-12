@@ -117,6 +117,30 @@ def _is_model_not_found_error(err: str) -> bool:
     )
 
 
+def _anthropic_omits_sampling(model: str) -> bool:
+    """Newer Claude models reject temperature / top_p / top_k (Sonnet 5, Opus 4.7+)."""
+    import re
+
+    m = (model or "").lower()
+    if any(token in m for token in ("mythos", "fable", "sonnet-5", "opus-5", "haiku-5")):
+        return True
+    major = re.search(r"claude-(?:opus|sonnet|haiku)-(\d+)", m)
+    if major and int(major.group(1)) >= 5:
+        return True
+    # claude-opus-4-7, claude-opus-4-8, ...
+    opus_minor = re.search(r"claude-opus-4-(\d+)", m)
+    if opus_minor and int(opus_minor.group(1)) >= 7:
+        return True
+    return False
+
+
+def _is_temperature_deprecated_error(err: str) -> bool:
+    text = (err or "").lower()
+    return "temperature" in text and (
+        "deprecated" in text or "not supported" in text or "invalid_request" in text
+    )
+
+
 @dataclass
 class LLMResult:
     content: str
@@ -431,23 +455,37 @@ def _anthropic_chat(
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
-    body = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "messages": [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"],
-    }
-    if system:
-        body["system"] = system
-    with httpx.Client(timeout=90.0) as client:
-        resp = client.post(
-            f"{meta['base_url'].rstrip('/')}{meta['chat_path']}",
-            headers=headers,
-            json=body,
-        )
-        if resp.status_code >= 400:
-            raise RuntimeError(f"anthropic API {resp.status_code}: {resp.text[:400]}")
-        data = resp.json()
+    msg_payload = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m["role"] != "system"
+    ]
+
+    def _post(include_temperature: bool) -> httpx.Response:
+        body: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": msg_payload,
+        }
+        # Sonnet 5 / Opus 4.7+ reject non-default sampling params; omit entirely.
+        if include_temperature and not _anthropic_omits_sampling(model):
+            body["temperature"] = temperature
+        if system:
+            body["system"] = system
+        with httpx.Client(timeout=90.0) as client:
+            return client.post(
+                f"{meta['base_url'].rstrip('/')}{meta['chat_path']}",
+                headers=headers,
+                json=body,
+            )
+
+    resp = _post(include_temperature=True)
+    if resp.status_code >= 400 and _is_temperature_deprecated_error(resp.text):
+        # Unknown new model IDs: retry once without temperature.
+        resp = _post(include_temperature=False)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"anthropic API {resp.status_code}: {resp.text[:400]}")
+    data = resp.json()
     parts = data.get("content") or []
     return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
 
