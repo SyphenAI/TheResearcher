@@ -23,15 +23,16 @@ PROVIDER_DEFAULTS = {
     "anthropic": {
         "base_url": "https://api.anthropic.com/v1",
         "chat_path": "/messages",
-        # Prefer broadly available aliases first; fall back across recent Sonnet IDs.
-        "default_model": "claude-3-5-sonnet-latest",
+        # Prefer current Sonnet/Haiku IDs; runtime can also discover via /v1/models.
+        "default_model": "claude-sonnet-4-5-20250929",
         "model_fallbacks": [
-            "claude-3-5-sonnet-latest",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-7-sonnet-latest",
-            "claude-sonnet-4-20250514",
-            "claude-3-5-haiku-latest",
-            "claude-3-haiku-20240307",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-6",
+            "claude-sonnet-5",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-6",
+            "claude-opus-5",
         ],
         "style": "anthropic",
     },
@@ -59,12 +60,41 @@ PROVIDER_DEFAULTS = {
 }
 
 
-def _model_candidates(meta: dict[str, Any], preferred: str | None = None) -> list[str]:
+def _discover_anthropic_models(api_key: str, base_url: str) -> list[str]:
+    try:
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+            if resp.status_code >= 400:
+                return []
+            data = resp.json()
+        ids = [str(m.get("id") or "").strip() for m in (data.get("data") or [])]
+        # Prefer sonnet/haiku for general research; keep opus available as later fallback.
+        preferred = [i for i in ids if "sonnet" in i.lower()]
+        secondary = [i for i in ids if "haiku" in i.lower()]
+        rest = [i for i in ids if i and i not in preferred and i not in secondary]
+        return preferred + secondary + rest
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _model_candidates(
+    meta: dict[str, Any],
+    preferred: str | None = None,
+    *,
+    api_key: str | None = None,
+    provider: str | None = None,
+) -> list[str]:
     models: list[str] = []
     if preferred:
         models.append(preferred)
     models.append(meta.get("default_model") or "")
     models.extend(meta.get("model_fallbacks") or [])
+    if provider == "anthropic" and api_key:
+        models.extend(_discover_anthropic_models(api_key, meta.get("base_url", "")))
     out: list[str] = []
     seen: set[str] = set()
     for model in models:
@@ -196,7 +226,7 @@ def test_token_connection(db: Session, token_row: ApiToken) -> dict[str, Any]:
         }
 
     style = meta["style"]
-    candidates = _model_candidates(meta)
+    candidates = _model_candidates(meta, api_key=api_key, provider=provider)
     started = datetime.now(timezone.utc)
     last_err = ""
     last_model = candidates[0] if candidates else meta.get("default_model", "")
@@ -302,7 +332,7 @@ def chat(
     api_key = decrypt_secret(token_row.encrypted_value)
     style = meta["style"]
     last_err = ""
-    for use_model in _model_candidates(meta, model):
+    for use_model in _model_candidates(meta, model, api_key=api_key, provider=provider):
         try:
             if style == "anthropic":
                 content = _anthropic_chat(
