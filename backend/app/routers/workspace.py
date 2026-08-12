@@ -241,23 +241,52 @@ def scholar_search(
     )
 
 
+# In-memory radar cache: key -> (expires_epoch, payload)
+_FEED_CACHE: dict[tuple, tuple[float, dict]] = {}
+_FEED_CACHE_TTL_SEC = 180  # 3 minutes
+
+
 @router.get("/feed")
 def research_topic_feed(
     days: int = 7,
+    refresh: bool = False,
     _: User = Depends(get_current_user),
 ) -> dict:
-    """Live dashboard feed: news + papers for follow topics (default last 7 days)."""
+    """Dashboard feed: news + papers. Cached a few minutes; refresh=1 forces live pull."""
+    import time
+
     from app.services.app_settings import load_app_settings
     from app.services.research_feed import build_topic_feed
 
     rules = load_app_settings()
     topics = rules.get("follow_topics") or []
-    return build_topic_feed(
-        topics if isinstance(topics, list) else [],
-        days=max(1, min(int(days or 7), 30)),
+    topic_list = topics if isinstance(topics, list) else []
+    days_n = max(1, min(int(days or 7), 30))
+    cache_key = (tuple(str(t).lower() for t in topic_list), days_n)
+
+    now = time.time()
+    if not refresh and cache_key in _FEED_CACHE:
+        exp, payload = _FEED_CACHE[cache_key]
+        if exp > now:
+            out = dict(payload)
+            out["cached"] = True
+            out["cache_ttl_sec"] = int(exp - now)
+            out["note"] = (
+                (out.get("note") or "")
+                + f" Showing cached feed (~{int(exp - now)}s left). Use Update now to force refresh."
+            ).strip()
+            return out
+
+    payload = build_topic_feed(
+        topic_list,
+        days=days_n,
         semantic_scholar_key=(rules.get("semantic_scholar_api_key") or "").strip() or None,
         openalex_key=(rules.get("openalex_api_key") or "").strip() or None,
     )
+    payload["cached"] = False
+    payload["cache_ttl_sec"] = _FEED_CACHE_TTL_SEC
+    _FEED_CACHE[cache_key] = (now + _FEED_CACHE_TTL_SEC, dict(payload))
+    return payload
 
 
 @router.post("/scholar/add-citation", response_model=CitationOut, status_code=201)

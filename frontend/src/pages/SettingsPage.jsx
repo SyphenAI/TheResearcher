@@ -21,6 +21,7 @@ const EMPTY = {
     "breach and attack simulation",
   ],
   follow_topics_text: "",
+  daily_cost_alert_usd: 2.0,
 };
 
 const EMPTY_TEMPLATE = {
@@ -410,6 +411,23 @@ export default function SettingsPage() {
             placeholder={"offensive security\nexposure management\nvulnerability management"}
           />
         </label>
+
+        <h2>Cost alert</h2>
+        <label>
+          Daily estimated cost alert (USD, last 24h). Set 0 to disable.
+          <input
+            type="number"
+            min={0}
+            max={1000}
+            step={0.25}
+            value={form.daily_cost_alert_usd ?? 2}
+            disabled={readOnly}
+            onChange={(e) => setField("daily_cost_alert_usd", Number(e.target.value))}
+          />
+        </label>
+        <p className="muted" style={{ margin: 0 }}>
+          Uses rough model price estimates from the usage log, not provider invoices.
+        </p>
 
         <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
           <input

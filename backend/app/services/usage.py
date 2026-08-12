@@ -102,6 +102,7 @@ def usage_summary(db: Session, *, days: int = 30, limit: int = 50) -> dict[str, 
     days = max(1, min(int(days or 30), 365))
     limit = max(1, min(int(limit or 50), 200))
     since = datetime.now(timezone.utc) - timedelta(days=days)
+    since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
     q = db.query(LlmUsageEvent).filter(LlmUsageEvent.created_at >= since)
     total_calls = q.count()
@@ -114,6 +115,19 @@ def usage_summary(db: Session, *, days: int = 30, limit: int = 50) -> dict[str, 
         .filter(LlmUsageEvent.created_at >= since)
         .one()
     )
+    cost_24h = (
+        db.query(func.coalesce(func.sum(LlmUsageEvent.estimated_cost_usd), 0.0))
+        .filter(LlmUsageEvent.created_at >= since_24h)
+        .scalar()
+    )
+    cost_24h = round(float(cost_24h or 0.0), 4)
+    try:
+        from app.services.app_settings import load_app_settings
+
+        threshold = float(load_app_settings().get("daily_cost_alert_usd") or 0.0)
+    except Exception:  # noqa: BLE001
+        threshold = 2.0
+    cost_alert = bool(threshold > 0 and cost_24h >= threshold)
     by_provider_rows = (
         db.query(
             LlmUsageEvent.provider,
@@ -155,6 +169,14 @@ def usage_summary(db: Session, *, days: int = 30, limit: int = 50) -> dict[str, 
         "input_tokens": int(totals[0] or 0),
         "output_tokens": int(totals[1] or 0),
         "estimated_cost_usd": round(float(totals[2] or 0.0), 4),
+        "estimated_cost_usd_24h": cost_24h,
+        "daily_cost_alert_usd": threshold,
+        "cost_alert": cost_alert,
+        "cost_alert_message": (
+            f"Estimated spend in last 24h is ${cost_24h:.4f}, at or above your ${threshold:.2f} alert."
+            if cost_alert
+            else ""
+        ),
         "note": (
             "Costs are rough estimates from public list prices, not invoices. "
             "Missing usage fields are estimated from text length."

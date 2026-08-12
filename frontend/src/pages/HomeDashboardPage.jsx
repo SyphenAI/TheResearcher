@@ -29,6 +29,7 @@ export default function HomeDashboardPage() {
   const [feed, setFeed] = useState(null);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedDays, setFeedDays] = useState(7);
+  const [costAlert, setCostAlert] = useState(null);
 
   async function loadProjects() {
     const data = await api("/api/projects");
@@ -44,11 +45,12 @@ export default function HomeDashboardPage() {
     }
   }
 
-  async function loadFeed(daysOverride) {
+  async function loadFeed(daysOverride, { force = false } = {}) {
     const days = Number(daysOverride ?? feedDays) || 7;
     setFeedBusy(true);
     try {
-      const f = await api(`/api/workspace/feed?days=${days}`);
+      const q = `/api/workspace/feed?days=${days}${force ? "&refresh=true" : ""}`;
+      const f = await api(q);
       setFeed(f);
       if (f?.days) setFeedDays(f.days);
     } catch {
@@ -66,12 +68,18 @@ export default function HomeDashboardPage() {
       api("/api/workspace/providers").catch(() => ({ active: [] })),
       api("/api/settings").catch(() => ({ max_agent_pct: 10, default_template_key: "blank" })),
       loadFeed(),
+      api("/api/security/usage?days=1&limit=5").catch(() => null),
     ])
-      .then(([, , t, p, s]) => {
+      .then(([, , t, p, s, , u]) => {
         setTemplates(t.templates || []);
         setTemplateKey(s.default_template_key || t.default || "blank");
         setProviders(p.active || []);
         setGlobalMaxAgent(s.max_agent_pct ?? 10);
+        if (u?.cost_alert) {
+          setCostAlert(u.cost_alert_message || "Daily estimated LLM cost alert.");
+        } else {
+          setCostAlert(null);
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -164,6 +172,14 @@ export default function HomeDashboardPage() {
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
+      {costAlert && (
+        <div className="alert warn">
+          <strong>Cost alert.</strong> {costAlert}{" "}
+          <button className="btn ghost" type="button" onClick={() => navigate("/security")}>
+            Open usage
+          </button>
+        </div>
+      )}
 
       <div className="grid-3">
         <div className="metric">
@@ -411,9 +427,9 @@ export default function HomeDashboardPage() {
             <button
               className="btn primary"
               type="button"
-              onClick={() => loadFeed()}
+              onClick={() => loadFeed(feedDays, { force: true })}
               disabled={feedBusy}
-              title="Re-pull Google News RSS and papers now"
+              title="Force live re-pull (bypasses short cache)"
             >
               {feedBusy ? "Updating…" : "Update now"}
             </button>
@@ -439,7 +455,11 @@ export default function HomeDashboardPage() {
           {feed?.generated_at
             ? ` · Updated ${new Date(feed.generated_at).toLocaleString()}`
             : ""}
-          {feed?.live ? " · live pull" : ""}
+          {feed?.cached
+            ? ` · cached (~${feed.cache_ttl_sec || "?"}s left)`
+            : feed?.live
+              ? " · live pull"
+              : ""}
         </p>
         {feed?.note && (
           <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>

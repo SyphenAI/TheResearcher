@@ -29,6 +29,8 @@ DEFAULTS: dict[str, Any] = {
         "vulnerability management",
         "breach and attack simulation",
     ],
+    # Alert when estimated LLM spend in last 24h exceeds this USD (0 = off)
+    "daily_cost_alert_usd": 2.0,
 }
 
 
@@ -77,6 +79,12 @@ def _write_settings(data: dict[str, Any]) -> dict[str, Any]:
     current["semantic_scholar_api_key"] = str(current.get("semantic_scholar_api_key") or "")
     current["openalex_api_key"] = str(current.get("openalex_api_key") or "")
     current["follow_topics"] = _normalize_follow_topics(current.get("follow_topics"))
+    try:
+        current["daily_cost_alert_usd"] = float(
+            min(1000.0, max(0.0, float(current.get("daily_cost_alert_usd") or 0)))
+        )
+    except (TypeError, ValueError):
+        current["daily_cost_alert_usd"] = float(DEFAULTS["daily_cost_alert_usd"])
     path = settings_file()
     path.write_text(json.dumps(current, indent=2), encoding="utf-8")
     return current

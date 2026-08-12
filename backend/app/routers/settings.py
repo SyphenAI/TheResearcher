@@ -34,6 +34,7 @@ class AppSettingsOut(BaseModel):
     semantic_scholar_api_key: str = ""
     openalex_api_key: str = ""
     follow_topics: list[str] = Field(default_factory=list)
+    daily_cost_alert_usd: float = 2.0
 
 
 class AppSettingsUpdate(BaseModel):
@@ -49,6 +50,7 @@ class AppSettingsUpdate(BaseModel):
     semantic_scholar_api_key: str | None = None
     openalex_api_key: str | None = None
     follow_topics: list[str] | None = None
+    daily_cost_alert_usd: float | None = Field(default=None, ge=0, le=1000)
 
 
 @router.get("", response_model=AppSettingsOut)

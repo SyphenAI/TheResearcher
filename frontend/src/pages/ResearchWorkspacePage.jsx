@@ -43,12 +43,18 @@ export default function ResearchWorkspacePage() {
   const [rightTab, setRightTab] = useState("paper");
   /** Pending humanize rewrite: accept/reject before writing to the section */
   const [humanizeDraft, setHumanizeDraft] = useState(null);
-  const [saveState, setSaveState] = useState("saved"); // saved | saving | dirty
+  /** One-level undo after Accept humanize */
+  const [humanizeUndo, setHumanizeUndo] = useState(null);
+  const [saveState, setSaveState] = useState("saved"); // saved | saving | dirty | error
+  const [saveToast, setSaveToast] = useState("");
+  const [sectionVersions, setSectionVersions] = useState([]);
   const [checklistMd, setChecklistMd] = useState("");
   const [scholarQ, setScholarQ] = useState("");
   const [scholarHits, setScholarHits] = useState([]);
   const [scholarNote, setScholarNote] = useState("");
   const humanizeRef = useRef(null);
+  const autosaveTimer = useRef(null);
+  const saveToastTimer = useRef(null);
 
   const activeSection = useMemo(
     () => sections.find((s) => s.id === sectionId) || null,
@@ -110,6 +116,9 @@ export default function ResearchWorkspacePage() {
   // Drop a pending rewrite when the user switches sections
   useEffect(() => {
     setHumanizeDraft(null);
+    setHumanizeUndo(null);
+    setSaveState("saved");
+    setSaveToast("");
   }, [sectionId]);
 
   useEffect(() => {
@@ -118,7 +127,46 @@ export default function ResearchWorkspacePage() {
     }
   }, [humanizeDraft]);
 
-  async function saveSectionContent(content_md) {
+  function flashSaveToast(text) {
+    setSaveToast(text);
+    if (saveToastTimer.current) clearTimeout(saveToastTimer.current);
+    saveToastTimer.current = setTimeout(() => setSaveToast(""), 2500);
+  }
+
+  async function loadSectionVersions() {
+    if (!project || !sectionId) {
+      setSectionVersions([]);
+      return;
+    }
+    try {
+      const res = await api(
+        `/api/projects/${project.id}/sections/${sectionId}/versions?limit=12`
+      );
+      setSectionVersions(res.versions || []);
+    } catch {
+      setSectionVersions([]);
+    }
+  }
+
+  useEffect(() => {
+    loadSectionVersions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, sectionId]);
+
+  // Debounced autosave when dirty (3s after last keystroke)
+  useEffect(() => {
+    if (isReviewer || !activeSection || saveState !== "dirty") return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    autosaveTimer.current = setTimeout(() => {
+      saveSectionContent(activeSection.content_md || "", { reason: "autosave" }).catch(() => {});
+    }, 3000);
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection?.content_md, saveState, sectionId]);
+
+  async function saveSectionContent(content_md, opts = {}) {
     if (!project || !activeSection) return;
     setSaveState("saving");
     try {
@@ -129,8 +177,11 @@ export default function ResearchWorkspacePage() {
       setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       await loadProject();
       setSaveState("saved");
+      flashSaveToast(opts.reason === "autosave" ? "Autosaved" : "Saved");
+      await loadSectionVersions();
     } catch (e) {
-      setSaveState("dirty");
+      setSaveState("error");
+      flashSaveToast("Save failed");
       throw e;
     }
   }
@@ -283,10 +334,19 @@ export default function ResearchWorkspacePage() {
     setBusy(true);
     setError("");
     try {
-      await saveSectionContent(humanizeDraft.proposed);
+      const previous = humanizeDraft.original || "";
+      setHumanizeUndo({
+        sectionId: humanizeDraft.sectionId,
+        content: previous,
+        at: new Date().toISOString(),
+      });
+      await saveSectionContent(humanizeDraft.proposed, { reason: "humanize-accept" });
       setHumanizeDraft(null);
-      setMessage("Humanized text accepted into the section. Edit further in your own voice before publish.");
+      setMessage(
+        "Humanized text accepted into the section. Use Undo humanize if you need the prior body back."
+      );
       await loadProjectDetails();
+      await loadSectionVersions();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -297,6 +357,53 @@ export default function ResearchWorkspacePage() {
   function rejectHumanize() {
     setHumanizeDraft(null);
     setMessage("Humanize draft discarded. Section unchanged.");
+  }
+
+  async function undoHumanizeAccept() {
+    if (!humanizeUndo || !activeSection) return;
+    if (humanizeUndo.sectionId !== activeSection.id) {
+      setError("Undo is for a different section. Switch back or use Version history.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await saveSectionContent(humanizeUndo.content, { reason: "humanize-undo" });
+      setHumanizeUndo(null);
+      setMessage("Reverted to the pre-humanize section body.");
+      await loadProjectDetails();
+      await loadSectionVersions();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreSectionVersion(versionId) {
+    if (!project || !sectionId || !versionId) return;
+    if (!window.confirm("Restore this version into the paper? Current body is snapshot first.")) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await api(
+        `/api/projects/${project.id}/sections/${sectionId}/versions/${versionId}/restore`,
+        { method: "POST" }
+      );
+      setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setSaveState("saved");
+      flashSaveToast("Version restored");
+      setMessage("Restored paper from version history.");
+      setHumanizeUndo(null);
+      await loadProject();
+      await loadSectionVersions();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function judgeSection() {
@@ -660,6 +767,22 @@ export default function ResearchWorkspacePage() {
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
+      {saveToast && (
+        <div className={`alert ${saveState === "error" ? "error" : "ok"}`} role="status">
+          {saveToast}
+        </div>
+      )}
+      {humanizeUndo && humanizeUndo.sectionId === sectionId && !isReviewer && (
+        <div className="alert warn row" style={{ justifyContent: "space-between" }}>
+          <span>
+            Humanize was accepted. One-level undo available for this section
+            {humanizeUndo.at ? ` (from ${new Date(humanizeUndo.at).toLocaleTimeString()})` : ""}.
+          </span>
+          <button className="btn" type="button" onClick={undoHumanizeAccept} disabled={busy}>
+            Undo humanize
+          </button>
+        </div>
+      )}
       {gate && (
         <div className={`alert ${gate.ready ? "ok" : "warn"}`}>
           <strong>Publish gate: {gate.ready ? "ready" : "blocked"}</strong>
@@ -1273,17 +1396,48 @@ export default function ResearchWorkspacePage() {
                   <span className="badge">{activeSection?.title || "markdown"}</span>
                   <span
                     className={
-                      saveState === "saved" ? "badge good" : saveState === "saving" ? "badge" : "badge bad"
+                      saveState === "saved"
+                        ? "badge good"
+                        : saveState === "saving"
+                          ? "badge"
+                          : "badge bad"
+                    }
+                    title={
+                      saveState === "dirty"
+                        ? "Unsaved — autosaves in a few seconds, or blur the editor"
+                        : saveState === "saving"
+                          ? "Saving to server"
+                          : saveState === "error"
+                            ? "Last save failed"
+                            : "All changes saved"
                     }
                   >
-                    {saveState === "saved" ? "Saved" : saveState === "saving" ? "Saving…" : "Unsaved edits"}
+                    {saveState === "saved"
+                      ? "Saved"
+                      : saveState === "saving"
+                        ? "Saving…"
+                        : saveState === "error"
+                          ? "Save failed"
+                          : "Unsaved (autosave soon)"}
                   </span>
+                  {!isReviewer && (
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      disabled={busy || saveState === "saving" || !activeSection}
+                      onClick={() =>
+                        saveSectionContent(activeSection?.content_md || "", { reason: "manual" })
+                      }
+                    >
+                      Save now
+                    </button>
+                  )}
                 </div>
               </div>
               {rightTab === "paper" ? (
                 <>
                   <textarea
-                    style={{ minHeight: 640 }}
+                    style={{ minHeight: 560 }}
                     value={activeSection?.content_md || ""}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1292,13 +1446,78 @@ export default function ResearchWorkspacePage() {
                         prev.map((s) => (s.id === sectionId ? { ...s, content_md: val } : s))
                       );
                     }}
-                    onBlur={(e) => saveSectionContent(e.target.value)}
+                    onBlur={(e) => {
+                      if (saveState === "dirty" || saveState === "error") {
+                        saveSectionContent(e.target.value, { reason: "blur" }).catch(() => {});
+                      }
+                    }}
                     readOnly={isReviewer}
                   />
                   <p className="footer-note">
-                    Edits save on blur and count as human contribution unless applied from the assistant.
-                    Humanize requires Accept. Diagrams and evidence notes insert into this section.
+                    Autosaves ~3s after you pause typing; also saves on blur and Save now. Humanize
+                    requires Accept (then Undo humanize once if needed).
                   </p>
+                  {!isReviewer && (
+                    <div className="panel stack" style={{ padding: "0.65rem" }}>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <strong>Version snippets</strong>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          onClick={loadSectionVersions}
+                          disabled={busy}
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                      <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+                        Light history of prior bodies (before save / restore). Not full VCS.
+                      </p>
+                      {!sectionVersions.length && (
+                        <p className="muted" style={{ margin: 0 }}>
+                          No versions yet. Edit and save to create snippets.
+                        </p>
+                      )}
+                      {sectionVersions.map((v) => (
+                        <div
+                          key={v.id}
+                          className="row"
+                          style={{ justifyContent: "space-between", alignItems: "flex-start" }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div>
+                              <span className="badge">{v.label}</span>{" "}
+                              <span className="muted" style={{ fontSize: "0.8rem" }}>
+                                {v.char_count} chars
+                                {v.created_at
+                                  ? ` · ${new Date(v.created_at).toLocaleString()}`
+                                  : ""}
+                              </span>
+                            </div>
+                            <div
+                              className="muted"
+                              style={{
+                                fontSize: "0.82rem",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {v.snippet}
+                            </div>
+                          </div>
+                          <button
+                            className="btn"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => restoreSectionVersion(v.id)}
+                          >
+                            Restore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="stack">

@@ -105,6 +105,21 @@ class ResearchSection(Base):
     project: Mapped[Project] = relationship(back_populates="sections")
 
 
+class SectionVersion(Base):
+    """Light paper history snippets (not full VCS)."""
+
+    __tablename__ = "section_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("research_sections.id"), index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    content_md: Mapped[str] = mapped_column(Text, default="")
+    label: Mapped[str] = mapped_column(String(128), default="snapshot")
+    char_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class ResearchTask(Base):
     __tablename__ = "research_tasks"
 

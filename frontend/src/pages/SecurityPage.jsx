@@ -528,6 +528,11 @@ export default function SecurityPage() {
               <p className="muted" style={{ margin: 0 }}>
                 {usage.note}
               </p>
+              {usage.cost_alert && (
+                <div className="alert warn" style={{ margin: 0 }}>
+                  <strong>Cost alert.</strong> {usage.cost_alert_message}
+                </div>
+              )}
               <div className="grid-3">
                 <div className="metric">
                   <span className="muted">Calls</span>
@@ -542,6 +547,18 @@ export default function SecurityPage() {
                 <div className="metric">
                   <span className="muted">Est. cost USD</span>
                   <strong>${Number(usage.estimated_cost_usd || 0).toFixed(4)}</strong>
+                </div>
+                <div className="metric">
+                  <span className="muted">Est. last 24h</span>
+                  <strong className={usage.cost_alert ? "badge bad" : ""}>
+                    ${Number(usage.estimated_cost_usd_24h || 0).toFixed(4)}
+                  </strong>
+                </div>
+                <div className="metric">
+                  <span className="muted">Alert at (24h)</span>
+                  <strong style={{ fontSize: "1rem" }}>
+                    ${Number(usage.daily_cost_alert_usd || 0).toFixed(2)}
+                  </strong>
                 </div>
               </div>
               {(usage.by_model || []).length > 0 && (

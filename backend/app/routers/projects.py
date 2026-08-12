@@ -328,8 +328,10 @@ def update_section(
     section_id: int,
     body: SectionUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> ResearchSection:
+    from app.services.section_versions import record_section_version
+
     project = _get_project(db, project_id)
     section = (
         db.query(ResearchSection)
@@ -340,12 +342,21 @@ def update_section(
         raise HTTPException(status_code=404, detail="Section not found")
 
     data = body.model_dump(exclude_unset=True)
-    old_content = section.content_md
+    old_content = section.content_md or ""
     for field, value in data.items():
         setattr(section, field, value)
 
     if "content_md" in data and data["content_md"] is not None:
         new_content = data["content_md"]
+        if new_content != old_content and old_content.strip():
+            record_section_version(
+                db,
+                section_id=section.id,
+                project_id=project_id,
+                content_md=old_content,
+                label="before-save",
+                created_by=user.username,
+            )
         delta = len(new_content) - len(old_content)
         if "agent_chars" not in data and "human_chars" not in data:
             if delta > 0:
@@ -353,6 +364,69 @@ def update_section(
             elif delta < 0:
                 section.human_chars = max(0, section.human_chars + delta)
 
+    _recalc_contributions(db, project)
+    db.commit()
+    db.refresh(section)
+    return section
+
+
+@router.get("/{project_id}/sections/{section_id}/versions")
+def list_section_versions(
+    project_id: int,
+    section_id: int,
+    limit: int = 12,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    from app.services.section_versions import list_section_versions as list_vers
+    from app.services.section_versions import version_to_dict
+
+    _get_project(db, project_id)
+    section = (
+        db.query(ResearchSection)
+        .filter(ResearchSection.id == section_id, ResearchSection.project_id == project_id)
+        .first()
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    rows = list_vers(db, section_id, limit=limit)
+    return {"section_id": section_id, "versions": [version_to_dict(r) for r in rows]}
+
+
+@router.post("/{project_id}/sections/{section_id}/versions/{version_id}/restore", response_model=SectionOut)
+def restore_section_version(
+    project_id: int,
+    section_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ResearchSection:
+    from app.services.section_versions import get_version, record_section_version
+
+    project = _get_project(db, project_id)
+    section = (
+        db.query(ResearchSection)
+        .filter(ResearchSection.id == section_id, ResearchSection.project_id == project_id)
+        .first()
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    ver = get_version(db, version_id, section_id=section_id)
+    if not ver:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    # Snapshot current before restore
+    if (section.content_md or "").strip():
+        record_section_version(
+            db,
+            section_id=section.id,
+            project_id=project_id,
+            content_md=section.content_md or "",
+            label="before-restore",
+            created_by=user.username,
+        )
+    section.content_md = ver.content_md or ""
+    section.human_chars = max(section.human_chars, len(section.content_md))
     _recalc_contributions(db, project)
     db.commit()
     db.refresh(section)
