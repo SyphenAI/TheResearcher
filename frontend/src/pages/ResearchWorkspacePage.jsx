@@ -45,6 +45,9 @@ export default function ResearchWorkspacePage() {
   const [humanizeDraft, setHumanizeDraft] = useState(null);
   const [saveState, setSaveState] = useState("saved"); // saved | saving | dirty
   const [checklistMd, setChecklistMd] = useState("");
+  const [scholarQ, setScholarQ] = useState("");
+  const [scholarHits, setScholarHits] = useState([]);
+  const [scholarNote, setScholarNote] = useState("");
   const humanizeRef = useRef(null);
 
   const activeSection = useMemo(
@@ -466,6 +469,84 @@ export default function ResearchWorkspacePage() {
     });
     setCiteForm({ title: "", url: "", author: "", year: "", style: "apa" });
     await loadProjectDetails();
+  }
+
+  async function searchScholar(topicOverride) {
+    const q = (topicOverride ?? scholarQ).trim();
+    if (q.length < 2) {
+      setError("Enter a topic of at least 2 characters for scholar search.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setScholarNote("");
+    try {
+      const res = await api(`/api/workspace/scholar/search?q=${encodeURIComponent(q)}&limit=12`);
+      setScholarHits(res.results || []);
+      setScholarQ(q);
+      setScholarNote(
+        res.message ||
+          `Found ${res.total || 0} scholarly hit(s)` +
+            (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
+            ". Ranked by topic fit + citations + recency."
+      );
+      if (res.source_errors?.length) {
+        setMessage((res.note || "") + " " + res.source_errors.join(" · "));
+      } else if (res.note) {
+        setMessage(res.note);
+      }
+    } catch (e) {
+      setError(e.message || "Scholar search failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function searchScholarForSection() {
+    const topic = [activeSection?.title, prompt, project?.title].filter(Boolean).join(" ").trim();
+    if (!topic) {
+      setError("Open a section with a title or prompt first.");
+      return;
+    }
+    setScholarQ(topic);
+    await searchScholar(topic);
+  }
+
+  async function addScholarCitation(item) {
+    if (!activeId || !item) return;
+    setBusy(true);
+    setError("");
+    try {
+      const row = await api("/api/workspace/scholar/add-citation", {
+        method: "POST",
+        body: JSON.stringify({
+          project_id: activeId,
+          style: citeForm.style || "apa",
+          item,
+        }),
+      });
+      await loadProjectDetails();
+      setMessage(`Added citation: ${row.title || item.title}`);
+    } catch (e) {
+      setError(e.message || "Could not add citation.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function insertScholarIntoPaper(item) {
+    if (!activeSection || !item) return;
+    const authors = item.author || "Author";
+    const year = item.year || "n.d.";
+    const title = item.title || "Untitled";
+    const url = item.url || (item.doi ? `https://doi.org/${item.doi}` : "");
+    const line = url
+      ? `${authors} (${year}). ${title}. ${url}`
+      : `${authors} (${year}). ${title}.`;
+    const snippet =
+      `\n\n${line}\n` +
+      (item.abstract ? `> ${item.abstract.slice(0, 280)}${item.abstract.length > 280 ? "…" : ""}\n` : "");
+    await appendToSection(snippet, "Scholar source inserted into paper. Add citation to project library if you will reuse it.");
   }
 
   async function addReview(e) {
@@ -956,6 +1037,83 @@ export default function ResearchWorkspacePage() {
               </div>
 
               <h3>Citations</h3>
+              <div className="panel stack" style={{ padding: "0.75rem" }}>
+                <strong>Scholar search</strong>
+                <p className="muted" style={{ margin: 0 }}>
+                  Find papers for this topic (Crossref + Semantic Scholar + OpenAlex). Ranked by topic fit,
+                  citations, and recency. Not Google Scholar (no official API).
+                </p>
+                <div className="row">
+                  <input
+                    style={{ flex: 1 }}
+                    value={scholarQ}
+                    onChange={(e) => setScholarQ(e.target.value)}
+                    placeholder="e.g. exposure management prioritization exploitability"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        searchScholar();
+                      }
+                    }}
+                  />
+                  <button className="btn" type="button" onClick={() => searchScholar()} disabled={busy}>
+                    Search
+                  </button>
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={searchScholarForSection}
+                    disabled={busy}
+                    title="Use section title + prompt + project title"
+                  >
+                    Best for this section
+                  </button>
+                </div>
+                {scholarNote && <p className="muted" style={{ margin: 0 }}>{scholarNote}</p>}
+                {scholarHits.map((hit, idx) => (
+                  <div key={`${hit.doi || hit.title}-${idx}`} className="panel stack" style={{ padding: "0.55rem" }}>
+                    <div className="row" style={{ justifyContent: "space-between" }}>
+                      <strong style={{ fontSize: "0.92rem" }}>{hit.title}</strong>
+                      <span className="badge">score {hit.score}</span>
+                    </div>
+                    <div className="muted" style={{ fontSize: "0.82rem" }}>
+                      {hit.author || "Author"} · {hit.year || "n.d."}
+                      {hit.venue ? ` · ${hit.venue}` : ""}
+                      {hit.cited_by_count != null ? ` · cited≈${hit.cited_by_count}` : ""}
+                      {hit.sources?.length ? ` · ${hit.sources.join("+")}` : ""}
+                    </div>
+                    {hit.abstract && (
+                      <div style={{ fontSize: "0.85rem" }}>
+                        {hit.abstract.slice(0, 220)}
+                        {hit.abstract.length > 220 ? "…" : ""}
+                      </div>
+                    )}
+                    <div className="row">
+                      {hit.url && (
+                        <a className="btn ghost" href={hit.url} target="_blank" rel="noreferrer">
+                          Open
+                        </a>
+                      )}
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={busy || isReviewer}
+                        onClick={() => addScholarCitation(hit)}
+                      >
+                        Add citation
+                      </button>
+                      <button
+                        className="btn primary"
+                        type="button"
+                        disabled={busy || isReviewer || !activeSection}
+                        onClick={() => insertScholarIntoPaper(hit)}
+                      >
+                        Insert into paper
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
               <form className="stack" onSubmit={addCitation}>
                 <div className="grid-3">
                   <label>

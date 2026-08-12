@@ -31,6 +31,8 @@ class AppSettingsOut(BaseModel):
     default_template_key: str = "blank"
     require_citations_for_publish: bool = True
     humanize_before_export_hint: bool = True
+    semantic_scholar_api_key: str = ""
+    openalex_api_key: str = ""
 
 
 class AppSettingsUpdate(BaseModel):
@@ -43,6 +45,8 @@ class AppSettingsUpdate(BaseModel):
     default_template_key: str | None = None
     require_citations_for_publish: bool | None = None
     humanize_before_export_hint: bool | None = None
+    semantic_scholar_api_key: str | None = None
+    openalex_api_key: str | None = None
 
 
 @router.get("", response_model=AppSettingsOut)

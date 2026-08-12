@@ -222,6 +222,63 @@ def list_citations(
     )
 
 
+@router.get("/scholar/search")
+def scholar_search(
+    q: str = "",
+    limit: int = 12,
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Find scholarly articles for a research topic (Crossref + Semantic Scholar + OpenAlex)."""
+    from app.services.app_settings import load_app_settings
+    from app.services.scholar_search import search_scholar
+
+    rules = load_app_settings()
+    return search_scholar(
+        q,
+        limit=limit,
+        semantic_scholar_key=(rules.get("semantic_scholar_api_key") or "").strip() or None,
+        openalex_key=(rules.get("openalex_api_key") or "").strip() or None,
+    )
+
+
+@router.post("/scholar/add-citation", response_model=CitationOut, status_code=201)
+def scholar_add_citation(
+    body: dict,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Citation:
+    """Create a project citation from a scholar search hit."""
+    from app.services.scholar_search import to_citation_fields
+
+    project_id = int(body.get("project_id") or 0)
+    if not project_id or not db.query(Project).filter(Project.id == project_id).first():
+        raise HTTPException(status_code=404, detail="Project not found")
+    item = body.get("item") or body
+    style = str(body.get("style") or "apa")
+    fields = to_citation_fields(item, style=style)
+    formatted = format_citation(
+        fields["style"],
+        fields["title"],
+        fields["url"],
+        fields["author"],
+        fields["year"],
+    )
+    row = Citation(
+        project_id=project_id,
+        style=fields["style"],
+        title=fields["title"],
+        url=fields["url"],
+        author=fields["author"],
+        year=fields["year"],
+        formatted=formatted,
+        notes=fields.get("notes") or "",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 @router.post("/citations", response_model=CitationOut, status_code=201)
 def add_citation(
     body: CitationCreate,

@@ -12,6 +12,8 @@ const EMPTY = {
   default_template_key: "blank",
   require_citations_for_publish: true,
   humanize_before_export_hint: true,
+  semantic_scholar_api_key: "",
+  openalex_api_key: "",
 };
 
 const EMPTY_TEMPLATE = {
@@ -335,6 +337,32 @@ export default function SettingsPage() {
             onChange={(e) => setField("default_evidence_mode", e.target.checked)}
           />
           <span>Evidence mode on for new projects</span>
+        </label>
+
+        <h2>Scholar search (optional keys)</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          Crossref works without keys. Semantic Scholar is usable lightly without a key. OpenAlex often
+          wants a free key from openalex.org. Keys stay local in Settings.
+        </p>
+        <label>
+          Semantic Scholar API key
+          <input
+            type="password"
+            value={form.semantic_scholar_api_key || ""}
+            disabled={readOnly}
+            onChange={(e) => setField("semantic_scholar_api_key", e.target.value)}
+            placeholder="Optional"
+          />
+        </label>
+        <label>
+          OpenAlex API key
+          <input
+            type="password"
+            value={form.openalex_api_key || ""}
+            disabled={readOnly}
+            onChange={(e) => setField("openalex_api_key", e.target.value)}
+            placeholder="Optional free key"
+          />
         </label>
 
         <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>

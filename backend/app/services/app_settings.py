@@ -18,6 +18,9 @@ DEFAULTS: dict[str, Any] = {
     "default_template_key": "blank",
     "require_citations_for_publish": True,
     "humanize_before_export_hint": True,
+    # Optional scholarly API keys (local only). Crossref works without keys.
+    "semantic_scholar_api_key": "",
+    "openalex_api_key": "",
 }
 
 
