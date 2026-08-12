@@ -84,8 +84,6 @@ export default function HomeDashboardPage() {
     };
   }, [projects, providers, globalMaxAgent]);
 
-  const selectedTemplate = templates.find((t) => t.key === templateKey);
-
   async function startResearch(e) {
     e.preventDefault();
     if (!title.trim()) return;
@@ -313,14 +311,6 @@ export default function HomeDashboardPage() {
                 ))}
               </select>
             </label>
-            {selectedTemplate && (
-              <div className="alert ok" style={{ margin: 0 }}>
-                {selectedTemplate.description}
-                <div className="muted" style={{ marginTop: "0.4rem" }}>
-                  {selectedTemplate.sections?.length || 0} sections
-                </div>
-              </div>
-            )}
             <label>
               Research title
               <input
