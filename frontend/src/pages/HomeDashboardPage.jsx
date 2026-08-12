@@ -165,124 +165,6 @@ export default function HomeDashboardPage() {
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
 
-      <div className="panel stack">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Research radar</h2>
-            <p className="muted" style={{ margin: "0.25rem 0 0" }}>
-              Live Google News RSS + recent papers for topics you follow. Default window: last 7 days.
-            </p>
-          </div>
-          <div className="row">
-            <label style={{ margin: 0 }}>
-              Window
-              <select
-                value={feedDays}
-                disabled={feedBusy}
-                onChange={(e) => {
-                  const d = Number(e.target.value) || 7;
-                  setFeedDays(d);
-                  loadFeed(d);
-                }}
-              >
-                <option value={1}>Last 24 hours</option>
-                <option value={3}>Last 3 days</option>
-                <option value={7}>Last 7 days</option>
-                <option value={14}>Last 14 days</option>
-                <option value={30}>Last 30 days</option>
-              </select>
-            </label>
-            <button
-              className="btn primary"
-              type="button"
-              onClick={() => loadFeed()}
-              disabled={feedBusy}
-              title="Re-pull Google News RSS and papers now"
-            >
-              {feedBusy ? "Updating…" : "Update now"}
-            </button>
-            <button className="btn" type="button" onClick={() => navigate("/settings")}>
-              Follow topics
-            </button>
-            <button className="btn" type="button" onClick={() => navigate("/search?tab=scholar")}>
-              Scholar search
-            </button>
-          </div>
-        </div>
-        {feed?.topics?.length > 0 && (
-          <div className="row">
-            {feed.topics.map((t) => (
-              <span className="badge" key={t}>
-                {t}
-              </span>
-            ))}
-          </div>
-        )}
-        <p className="muted" style={{ margin: 0 }}>
-          {feed?.message || ""}
-          {feed?.generated_at
-            ? ` · Updated ${new Date(feed.generated_at).toLocaleString()}`
-            : ""}
-          {feed?.live ? " · live pull" : ""}
-        </p>
-        {feed?.note && (
-          <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
-            {feed.note}
-          </p>
-        )}
-        {!feed?.items?.length && !feedBusy && (
-          <p className="muted">
-            No items in this window. Click Update now, broaden topics in Settings, or widen the window.
-          </p>
-        )}
-        <div className="stack" style={{ maxHeight: 420, overflow: "auto" }}>
-          {(feed?.items || []).slice(0, 20).map((item, idx) => (
-            <div
-              key={`${item.kind}-${item.url || item.title}-${idx}`}
-              className="panel stack"
-              style={{ padding: "0.6rem" }}
-            >
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong style={{ fontSize: "0.92rem" }}>{item.title}</strong>
-                <span className={`badge ${item.kind === "news" ? "good" : ""}`}>
-                  {item.kind === "news" ? "news" : "paper"}
-                </span>
-              </div>
-              <div className="muted" style={{ fontSize: "0.8rem" }}>
-                {item.topic ? `Topic: ${item.topic} · ` : ""}
-                {item.source || item.provider || ""}
-                {item.published_at ? ` · ${item.published_at}` : ""}
-                {item.cited_by_count ? ` · cited≈${item.cited_by_count}` : ""}
-              </div>
-              {item.snippet && (
-                <div style={{ fontSize: "0.85rem" }}>
-                  {item.snippet.slice(0, 200)}
-                  {item.snippet.length > 200 ? "…" : ""}
-                </div>
-              )}
-              <div className="row">
-                {item.url && (
-                  <a className="btn ghost" href={item.url} target="_blank" rel="noreferrer">
-                    Open
-                  </a>
-                )}
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() =>
-                    navigate(
-                      `/search?tab=scholar&q=${encodeURIComponent(item.topic || item.title || "")}`
-                    )
-                  }
-                >
-                  Search scholar
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       <div className="grid-3">
         <div className="metric">
           <span className="muted">Active research</span>
@@ -496,6 +378,124 @@ export default function HomeDashboardPage() {
               {busy ? "Starting…" : "Start research"}
             </button>
           </form>
+        </div>
+      </div>
+
+      <div className="panel stack">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Research radar</h2>
+            <p className="muted" style={{ margin: "0.25rem 0 0" }}>
+              Live Google News RSS + recent papers for topics you follow. Default window: last 7 days.
+            </p>
+          </div>
+          <div className="row">
+            <label style={{ margin: 0 }}>
+              Window
+              <select
+                value={feedDays}
+                disabled={feedBusy}
+                onChange={(e) => {
+                  const d = Number(e.target.value) || 7;
+                  setFeedDays(d);
+                  loadFeed(d);
+                }}
+              >
+                <option value={1}>Last 24 hours</option>
+                <option value={3}>Last 3 days</option>
+                <option value={7}>Last 7 days</option>
+                <option value={14}>Last 14 days</option>
+                <option value={30}>Last 30 days</option>
+              </select>
+            </label>
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => loadFeed()}
+              disabled={feedBusy}
+              title="Re-pull Google News RSS and papers now"
+            >
+              {feedBusy ? "Updating…" : "Update now"}
+            </button>
+            <button className="btn" type="button" onClick={() => navigate("/settings")}>
+              Follow topics
+            </button>
+            <button className="btn" type="button" onClick={() => navigate("/search?tab=scholar")}>
+              Scholar search
+            </button>
+          </div>
+        </div>
+        {feed?.topics?.length > 0 && (
+          <div className="row">
+            {feed.topics.map((t) => (
+              <span className="badge" key={t}>
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="muted" style={{ margin: 0 }}>
+          {feed?.message || ""}
+          {feed?.generated_at
+            ? ` · Updated ${new Date(feed.generated_at).toLocaleString()}`
+            : ""}
+          {feed?.live ? " · live pull" : ""}
+        </p>
+        {feed?.note && (
+          <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+            {feed.note}
+          </p>
+        )}
+        {!feed?.items?.length && !feedBusy && (
+          <p className="muted">
+            No items in this window. Click Update now, broaden topics in Settings, or widen the window.
+          </p>
+        )}
+        <div className="stack" style={{ maxHeight: 420, overflow: "auto" }}>
+          {(feed?.items || []).slice(0, 20).map((item, idx) => (
+            <div
+              key={`${item.kind}-${item.url || item.title}-${idx}`}
+              className="panel stack"
+              style={{ padding: "0.6rem" }}
+            >
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong style={{ fontSize: "0.92rem" }}>{item.title}</strong>
+                <span className={`badge ${item.kind === "news" ? "good" : ""}`}>
+                  {item.kind === "news" ? "news" : "paper"}
+                </span>
+              </div>
+              <div className="muted" style={{ fontSize: "0.8rem" }}>
+                {item.topic ? `Topic: ${item.topic} · ` : ""}
+                {item.source || item.provider || ""}
+                {item.published_at ? ` · ${item.published_at}` : ""}
+                {item.cited_by_count ? ` · cited≈${item.cited_by_count}` : ""}
+              </div>
+              {item.snippet && (
+                <div style={{ fontSize: "0.85rem" }}>
+                  {item.snippet.slice(0, 200)}
+                  {item.snippet.length > 200 ? "…" : ""}
+                </div>
+              )}
+              <div className="row">
+                {item.url && (
+                  <a className="btn ghost" href={item.url} target="_blank" rel="noreferrer">
+                    Open
+                  </a>
+                )}
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() =>
+                    navigate(
+                      `/search?tab=scholar&q=${encodeURIComponent(item.topic || item.title || "")}`
+                    )
+                  }
+                >
+                  Search scholar
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
