@@ -8,6 +8,11 @@ TheResearcher_dev_pat.txt.txt
 !.env.example
 Senior Director*.txt
 
+# Local-only agent / session handoff notes (never commit)
+local/
+SESSION_HANDOFF.md
+.session/
+
 # Runtime data (local only)
 data/*
 !data/.gitkeep
