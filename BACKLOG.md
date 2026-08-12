@@ -16,8 +16,8 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 | B06 | AI checker tab + contribution metrics | completed | Heuristic local checker |
 | B07 | Judge + humanize + docx export | completed | Local offline implementations |
 | B08 | README + backlog | completed | This file |
-| B09 | Docker build/run verification | in progress | Verify on :50080 |
-| B10 | Push `pre-prod` branch to origin | not started | After green local run |
+| B09 | Docker build/run verification | completed | Image healthy on http://localhost:50080 |
+| B10 | Push `pre-prod` branch to origin | completed | origin/pre-prod @ 4ed496d |
 
 ## Near-term product gaps
 
@@ -53,3 +53,6 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 - Authenticated to GitHub as `SyphenAI`, repo `SyphenAI/TheResearcher`
 - Created local `pre-prod` branch from `main`
 - Scaffolded Dockerized FastAPI + React app with core research desk features
+- Docker Desktop engine was flaky on first start; build succeeded after daemon came up
+- Verified container health, login, and UI shell on port 50080
+- Pushed `pre-prod` to origin
