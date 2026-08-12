@@ -31,8 +31,14 @@ from app.schemas import (
     JudgeRequest,
     RewriteRequest,
     SectionOut,
+    TextExtractOut,
 )
 from app.services.ai_style import humanize_text, local_judge, local_research_assist, score_ai_likelihood
+from app.services.document_text import (
+    SUPPORTED_EXTENSIONS,
+    DocumentExtractError,
+    extract_text_from_upload,
+)
 from app.services.export_docx import markdown_to_docx_bytes
 
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -120,16 +126,92 @@ def rewrite_text(
     }
 
 
+@router.get("/extract/formats")
+def list_extract_formats(_: User = Depends(get_current_user)) -> dict:
+    return {
+        "extensions": sorted(SUPPORTED_EXTENSIONS),
+        "notes": [
+            "PDF text extraction works for text-based PDFs (no OCR for scans yet).",
+            "Word support is .docx (not legacy .doc).",
+            "Also: pptx, odt, txt, md, csv, html, rtf, json, log.",
+        ],
+    }
+
+
+@router.post("/extract-text", response_model=TextExtractOut)
+async def extract_text(
+    file: UploadFile = File(...),
+    _: User = Depends(get_current_user),
+) -> TextExtractOut:
+    data = await file.read()
+    try:
+        extracted = extract_text_from_upload(
+            file.filename or "upload.bin",
+            data,
+            file.content_type,
+        )
+    except DocumentExtractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return TextExtractOut(
+        **extracted,
+        supported_extensions=sorted(SUPPORTED_EXTENSIONS),
+    )
+
+
 @router.post("/ai-check", response_model=AiCheckOut)
 def ai_check(
     body: AiCheckRequest,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AiCheckOut:
-    result = score_ai_likelihood(body.text)
-    sample = body.text[:500]
-    row = AiCheckResult(
+    return _run_ai_check(
+        db=db,
+        user=user,
+        text=body.text,
         source_label=body.source_label,
+    )
+
+
+@router.post("/ai-check/upload", response_model=AiCheckOut)
+async def ai_check_upload(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> AiCheckOut:
+    data = await file.read()
+    try:
+        extracted = extract_text_from_upload(
+            file.filename or "upload.bin",
+            data,
+            file.content_type,
+        )
+    except DocumentExtractError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    result = _run_ai_check(
+        db=db,
+        user=user,
+        text=extracted["text"],
+        source_label=f"upload:{extracted['filename']}",
+    )
+    result.extracted_text = extracted["text"]
+    result.filename = extracted["filename"]
+    result.char_count = extracted["char_count"]
+    result.truncated = extracted["truncated"]
+    return result
+
+
+def _run_ai_check(
+    *,
+    db: Session,
+    user: User,
+    text: str,
+    source_label: str,
+) -> AiCheckOut:
+    result = score_ai_likelihood(text)
+    sample = text[:500]
+    row = AiCheckResult(
+        source_label=source_label,
         text_sample=sample,
         ai_pct=result["ai_pct"],
         human_pct=result["human_pct"],

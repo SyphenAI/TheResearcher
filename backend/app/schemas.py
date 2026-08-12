@@ -210,6 +210,19 @@ class AiCheckOut(BaseModel):
     signals: dict[str, Any]
     recommendations: list[str]
     created_at: datetime
+    extracted_text: str | None = None
+    filename: str | None = None
+    char_count: int | None = None
+    truncated: bool | None = None
+
+
+class TextExtractOut(BaseModel):
+    filename: str
+    extension: str
+    char_count: int
+    truncated: bool
+    text: str
+    supported_extensions: list[str]
 
 
 class JudgeRequest(BaseModel):

@@ -22,6 +22,8 @@ REQUIRED_PACKAGES = [
     "passlib",
     "cryptography",
     "docx",
+    "pypdf",
+    "pptx",
     "httpx",
 ]
 
