@@ -41,6 +41,7 @@ export default function SettingsPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [saveFeedback, setSaveFeedback] = useState(""); // inline under Save settings
   const [busy, setBusy] = useState(false);
 
   const selected = useMemo(
@@ -99,11 +100,13 @@ export default function SettingsPage() {
     e.preventDefault();
     if (user?.role !== "admin") {
       setError("Only admin can change global settings.");
+      setSaveFeedback("Only admin can save.");
       return;
     }
     setBusy(true);
     setError("");
     setMessage("");
+    setSaveFeedback("Saving…");
     try {
       const follow = String(form.follow_topics_text || "")
         .split(/[\n,;]+/)
@@ -127,21 +130,21 @@ export default function SettingsPage() {
         body: JSON.stringify(payload),
       });
       const topics = Array.isArray(saved.follow_topics) ? saved.follow_topics : follow;
+      const savedCost =
+        saved.daily_cost_alert_usd != null ? Number(saved.daily_cost_alert_usd) : costAlert;
       setForm({
         ...EMPTY,
         ...saved,
         follow_topics: topics,
         follow_topics_text: topics.join("\n"),
-        daily_cost_alert_usd:
-          saved.daily_cost_alert_usd != null ? Number(saved.daily_cost_alert_usd) : costAlert,
+        daily_cost_alert_usd: savedCost,
       });
-      setMessage(
-        `Global rules saved. Cost alert is $${Number(
-          saved.daily_cost_alert_usd != null ? saved.daily_cost_alert_usd : costAlert
-        ).toFixed(2)} / 24h.`
-      );
+      const okMsg = `Saved. Cost alert is $${savedCost.toFixed(2)} / 24h.`;
+      setMessage(`Global rules saved. Cost alert is $${savedCost.toFixed(2)} / 24h.`);
+      setSaveFeedback(okMsg);
     } catch (err) {
       setError(err.message);
+      setSaveFeedback(`Save failed: ${err.message}`);
     } finally {
       setBusy(false);
     }
@@ -486,13 +489,37 @@ export default function SettingsPage() {
         </label>
 
         {!readOnly && (
-          <div className="row">
-            <button className="btn primary" type="submit" disabled={busy}>
-              Save settings
-            </button>
-            <button className="btn" type="button" disabled={busy} onClick={resetDefaults}>
-              Reset rules to defaults
-            </button>
+          <div className="stack" style={{ gap: "0.5rem" }}>
+            <div className="row">
+              <button className="btn primary" type="submit" disabled={busy}>
+                {busy ? "Saving…" : "Save settings"}
+              </button>
+              <button className="btn" type="button" disabled={busy} onClick={resetDefaults}>
+                Reset rules to defaults
+              </button>
+            </div>
+            {saveFeedback && (
+              <div
+                className={`alert ${
+                  saveFeedback.startsWith("Save failed") || saveFeedback.startsWith("Only admin")
+                    ? "error"
+                    : saveFeedback === "Saving…"
+                      ? "warn"
+                      : "ok"
+                }`}
+                role="status"
+                style={{ margin: 0 }}
+              >
+                {saveFeedback}
+              </div>
+            )}
+            <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+              Current cost alert value in the form: $
+              {form.daily_cost_alert_usd === "" || form.daily_cost_alert_usd == null
+                ? "—"
+                : Number(form.daily_cost_alert_usd).toFixed(2)}{" "}
+              (click Save settings to write it).
+            </p>
           </div>
         )}
 
