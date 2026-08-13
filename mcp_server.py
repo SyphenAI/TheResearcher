@@ -1,17 +1,74 @@
 #!/usr/bin/env python3
-"""Minimal MCP-style stdio tool server for TheResearcher local API.
+"""TheResearcher MCP bridge — let external AI agents call this local app.
 
-Exposes research, judge, ai-check, and extract helpers so host agents
-(Claude, Cursor, etc.) can call the same local stack.
+============================================================================
+WHAT THIS FILE IS
+============================================================================
+A small stdio "tool server" that sits *beside* the Docker/web app. Host agents
+(Claude Desktop, Cursor, other MCP-capable clients) talk to *this* process over
+stdin/stdout. This process then HTTP-calls the same FastAPI endpoints the UI
+uses (Research Assistant, AI check, evidence, publish gate, etc.).
 
-Run (with the app up on 50080 and a bearer token):
+It is NOT the main product server. The desk still runs via:
+  docker compose up  →  http://127.0.0.1:50080
+This file only *proxies* selected APIs so external agents reuse your local
+tokens, projects, and reasoning stack without re-implementing them.
 
-  set TR_TOKEN=...
+============================================================================
+WHY IT EXISTS
+============================================================================
+- Same research/judge/evidence logic as the browser desk
+- Host agents can draft, check AI %, scan evidence, and gate publish
+- Keeps secrets in TheResearcher (Security tokens), not in the host agent
+
+============================================================================
+REQUIREMENTS
+============================================================================
+1) App healthy on TR_BASE (default http://127.0.0.1:50080)
+2) Login token: set TR_TOKEN to a Bearer JWT from POST /api/auth/login
+   (most tools need auth; health does not)
+3) Python 3 with only stdlib (urllib + json) — no extra pip for this file
+
+Windows PowerShell example:
+  $env:TR_BASE = "http://127.0.0.1:50080"
+  $env:TR_TOKEN = "<paste access_token from login>"
   python mcp_server.py
 
-Protocol: newline-delimited JSON requests:
+============================================================================
+HOW IT WORKS (FLOW)
+============================================================================
+  Host agent  --stdio NDJSON-->  mcp_server.py  --HTTP+Bearer-->  FastAPI app
+       ^                              |
+       +-------- JSON result ---------+
+
+Env:
+  TR_BASE   API root (default http://127.0.0.1:50080)
+  TR_TOKEN  JWT for Authorization: Bearer ...
+
+Protocol (one JSON object per line on stdin; one response line on stdout):
   {"id":"1","method":"tools/list"}
   {"id":"2","method":"tools/call","params":{"name":"ai_check","arguments":{"text":"..."}}}
+
+============================================================================
+TOOLS EXPOSED (name → local API)
+============================================================================
+  health              GET  /api/health
+  list_projects       GET  /api/projects
+  research_assistant  POST /api/research/assistant   (multi-agent draft; slow)
+  ai_check            POST /api/research/ai-check    (local AI % heuristic)
+  evidence_analyze    POST /api/workspace/evidence/analyze
+  publish_gate        GET  /api/workspace/projects/{id}/publish-gate
+
+Add more tools by extending TOOLS + call_tool() and pointing at routers under
+backend/app/routers/.
+
+============================================================================
+LIMITS / NOTES
+============================================================================
+- Minimal MCP-style JSON over stdio, not a full MCP SDK server
+- research_assistant can take 1–3+ minutes (multi-provider panel)
+- Does not apply drafts to paper; UI or a future apply tool must do that
+- Timeouts: HTTP 120s for authenticated calls, 30s for health
 """
 
 from __future__ import annotations
