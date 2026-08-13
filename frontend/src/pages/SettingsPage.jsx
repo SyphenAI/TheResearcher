@@ -111,7 +111,17 @@ export default function SettingsPage() {
         .filter((t) => t.length >= 2)
         .slice(0, 12);
       const { follow_topics_text, ...rest } = form;
-      const payload = { ...rest, follow_topics: follow };
+      let costAlert = rest.daily_cost_alert_usd;
+      if (costAlert === "" || costAlert == null || Number.isNaN(Number(costAlert))) {
+        costAlert = 0;
+      } else {
+        costAlert = Math.min(1000, Math.max(0, Number(costAlert)));
+      }
+      const payload = {
+        ...rest,
+        follow_topics: follow,
+        daily_cost_alert_usd: costAlert,
+      };
       const saved = await api("/api/settings", {
         method: "PUT",
         body: JSON.stringify(payload),
@@ -122,8 +132,14 @@ export default function SettingsPage() {
         ...saved,
         follow_topics: topics,
         follow_topics_text: topics.join("\n"),
+        daily_cost_alert_usd:
+          saved.daily_cost_alert_usd != null ? Number(saved.daily_cost_alert_usd) : costAlert,
       });
-      setMessage("Global rules saved.");
+      setMessage(
+        `Global rules saved. Cost alert is $${Number(
+          saved.daily_cost_alert_usd != null ? saved.daily_cost_alert_usd : costAlert
+        ).toFixed(2)} / 24h.`
+      );
     } catch (err) {
       setError(err.message);
     } finally {
@@ -419,15 +435,45 @@ export default function SettingsPage() {
             type="number"
             min={0}
             max={1000}
-            step={0.25}
-            value={form.daily_cost_alert_usd ?? 2}
+            step={0.5}
+            inputMode="decimal"
+            value={
+              form.daily_cost_alert_usd === "" || form.daily_cost_alert_usd == null
+                ? ""
+                : form.daily_cost_alert_usd
+            }
             disabled={readOnly}
-            onChange={(e) => setField("daily_cost_alert_usd", Number(e.target.value))}
+            onChange={(e) => {
+              const raw = e.target.value;
+              // Allow clearing while typing (e.g. change 2 → 10 without snapping to 0).
+              if (raw === "") {
+                setField("daily_cost_alert_usd", "");
+                return;
+              }
+              const n = Number(raw);
+              if (!Number.isNaN(n)) setField("daily_cost_alert_usd", n);
+            }}
           />
         </label>
         <p className="muted" style={{ margin: 0 }}>
-          Uses rough model price estimates from the usage log, not provider invoices.
+          Uses rough model price estimates from the usage log, not provider invoices. After changing,
+          click <strong>Save settings</strong> at the bottom of this form (not only on Security).
         </p>
+        {!readOnly && (
+          <div className="row">
+            {[1, 2, 5, 10, 25].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => setField("daily_cost_alert_usd", n)}
+              >
+                ${n}
+              </button>
+            ))}
+          </div>
+        )}
 
         <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
           <input

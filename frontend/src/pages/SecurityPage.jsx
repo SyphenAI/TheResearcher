@@ -559,6 +559,9 @@ export default function SecurityPage() {
                   <strong style={{ fontSize: "1rem" }}>
                     ${Number(usage.daily_cost_alert_usd || 0).toFixed(2)}
                   </strong>
+                  <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                    Change under Settings → Cost alert (Save settings). Not editable on this page.
+                  </div>
                 </div>
               </div>
               {(usage.by_model || []).length > 0 && (
