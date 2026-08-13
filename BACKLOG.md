@@ -46,7 +46,7 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 | P07 | Citation manager + scholar search | completed | APA-style fields; Crossref + Semantic Scholar + OpenAlex; year_from/year_to filters |
 | P08 | MFA for local accounts | not started | Password auth only |
 | P09 | Collaborative simultaneous editing | not started | Single-user local edits |
-| P10 | MCP bridge for host agents | partial | `mcp_server.py` stdio tools (health, projects, assistant, ai_check, evidence, gate) |
+| P10 | MCP bridge for host agents | partial | Expanded tools + FastMCP when `pip install -r requirements-mcp.txt`; stdlib NDJSON fallback. Not every desk endpoint yet. |
 | P11 | Automated test suite | not started | API + style lint for banned dashes/phrases |
 | P12 | Optional syphen.ai visual theme pass | not started | Current dark theme is independent |
 | P13 | Search: local library FTS | completed | Projects, sections, citations, artifacts |
@@ -80,7 +80,7 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 | Product | Deeper scaffolds after practice papers or topic | Templates already usable |
 | Product | Per-project follow topics | Optional; global follow topics in Settings work today |
 | Product | Richer section history UI (diff versions) | Snapshots exist; UI is list+restore |
-| Product | Full MCP SDK / more tools | Bridge is minimal stdio |
+| Product | MCP: more endpoints / resources / Claude config doc | Core tools + FastMCP path shipped; wire client config when ready |
 | Product | Automated tests (P11) | Highest engineering hygiene gap |
 | Docs | README screenshots + feature list refresh | README still reads early-scaffold in places |
 
