@@ -42,6 +42,14 @@ from app.services.document_text import (
 )
 from app.services.export_docx import markdown_to_docx_bytes
 
+# Research desk HTTP API. Prefix: /api/research
+# Key routes:
+#   POST /assistant       — multi-agent or single-role draft (does not save paper)
+#   POST /assistant/apply — append draft to section + agent_chars ledger
+#   POST /rewrite         — local or live humanize
+#   POST /ai-check        — local heuristic (+ optional live panel)
+#   POST /judge           — local + judge-enabled models
+# Reasoning implementations: services/agents.py, ai_style.py, research_scaffold.py, llm.py
 router = APIRouter(prefix="/api/research", tags=["research"])
 
 
@@ -51,6 +59,7 @@ def research_assistant(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AssistantResponse:
+    """Desk Research Assistant. multi_agent=true -> agents.run_research_panel (slow)."""
     from app.services.agents import run_research_panel, run_single_role
 
     context = ""
@@ -60,6 +69,7 @@ def research_assistant(
     if body.section_id:
         section = db.query(ResearchSection).filter(ResearchSection.id == body.section_id).first()
         if section:
+            # Existing paper body is context for the panel, not overwritten here.
             context = section.content_md
             project = db.query(Project).filter(Project.id == section.project_id).first()
             if project and body.evidence_mode is None:
@@ -85,22 +95,10 @@ def research_assistant(
             context_md=context,
         )
 
-    if section:
-        section.agent_chars += result["agent_chars"]
-        project = project or db.query(Project).filter(Project.id == section.project_id).first()
-        if project:
-            sections = (
-                db.query(ResearchSection)
-                .filter(ResearchSection.project_id == project.id)
-                .all()
-            )
-            agent = sum(s.agent_chars for s in sections)
-            human = sum(s.human_chars for s in sections)
-            total = agent + human
-            if total > 0:
-                project.agent_contribution_pct = round(100.0 * agent / total, 1)
-                project.human_contribution_pct = round(100.0 * human / total, 1)
-                project.publish_ready = False
+    # Do not bump agent_chars until Apply to paper — draft-only runs must not
+    # leave the desk stuck at high agent contribution.
+    if section and project:
+        project.publish_ready = False
         db.commit()
 
     return AssistantResponse(
@@ -122,28 +120,25 @@ def apply_assistant_output(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ResearchSection:
+    """Write Assistant draft into the section paper. This is when agent % increases."""
     section = db.query(ResearchSection).filter(ResearchSection.id == body.section_id).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
     separator = "\n\n" if section.content_md.strip() else ""
     addition = body.content
     section.content_md = f"{section.content_md}{separator}{addition}"
+    # Contribution ledger (desk Agent contribution %). Only bumps on apply, not on draft.
     if body.mark_as_agent:
-        section.agent_chars += len(addition)
+        section.agent_chars = max(0, int(section.agent_chars or 0)) + len(addition)
     else:
-        section.human_chars += len(addition)
+        section.human_chars = max(0, int(section.human_chars or 0)) + len(addition)
 
     project = db.query(Project).filter(Project.id == section.project_id).first()
     if project:
-        sections = (
-            db.query(ResearchSection).filter(ResearchSection.project_id == project.id).all()
-        )
-        agent = sum(s.agent_chars for s in sections)
-        human = sum(s.human_chars for s in sections)
-        total = agent + human
-        if total > 0:
-            project.agent_contribution_pct = round(100.0 * agent / total, 1)
-            project.human_contribution_pct = round(100.0 * human / total, 1)
+        from app.routers.projects import _recalc_contributions
+
+        _recalc_contributions(db, project)
+        project.publish_ready = False
 
     db.commit()
     db.refresh(section)
@@ -156,6 +151,7 @@ def rewrite_text(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
+    """Humanize endpoint. mode=local|live|auto. Desk requires Accept before save."""
     from app.services.llm import chat, list_active_providers
 
     mode = (body.mode or "auto").strip().lower()
@@ -166,6 +162,7 @@ def rewrite_text(
     if not text.strip():
         raise HTTPException(status_code=400, detail="Text is required to rewrite.")
 
+    # Always compute local rules rewrite; live path may replace it.
     local_rewritten = humanize_text(text, strength=body.strength)
     rewritten = local_rewritten
     used_live = False

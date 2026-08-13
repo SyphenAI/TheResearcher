@@ -1,7 +1,10 @@
-"""Domain research scaffolds for offline and live-assisted drafting.
+"""Offline research scaffolds (no API cost).
 
-Voice target: security research analyst, not raw pentest ticket writer.
-Helps transition from active testing work into insight-style research notes.
+Entry: build_local_scaffold() via ai_style.local_research_assist when the
+Research Assistant has no live research tokens (or a live role fails).
+
+detect_domain() picks a skeleton: offensive | exposure | vuln | saas |
+tester_analyst | general. Output is markdown headings for the desk draft.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from app.services.refs_cache import trusted_refs_snippet
 
 
 def detect_domain(prompt: str, context_md: str = "") -> str:
+    """Keyword score -> best domain label for scaffold sections."""
     text = f"{prompt}\n{context_md}".lower()
     scores = {
         "offensive": len(
@@ -56,6 +60,7 @@ def detect_domain(prompt: str, context_md: str = "") -> str:
 
 
 def evidence_checklist_md(topic: str = "") -> str:
+    """Markdown checklist inserted from desk Evidence tools."""
     topic_bit = f" for **{topic}**" if topic.strip() else ""
     return (
         f"## Evidence checklist{topic_bit}\n\n"
@@ -125,6 +130,7 @@ def buyer_questions_md(domain: str) -> str:
 
 
 def build_local_scaffold(prompt: str, context_md: str = "", rewrite_human: bool = True) -> dict[str, Any]:
+    """Build offline draft dict: content, agent_chars, notes, citations."""
     prompt = prompt.strip()
     domain = detect_domain(prompt, context_md)
     refs = trusted_refs_snippet(1200)

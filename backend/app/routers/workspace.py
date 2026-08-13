@@ -314,9 +314,14 @@ def list_live_models(
 def scholar_search(
     q: str = "",
     limit: int = 12,
+    year_from: int | None = None,
+    year_to: int | None = None,
     _: User = Depends(get_current_user),
 ) -> dict:
-    """Find scholarly articles for a research topic (Crossref + Semantic Scholar + OpenAlex)."""
+    """Find scholarly articles for a research topic (Crossref + Semantic Scholar + OpenAlex).
+
+    Optional year_from / year_to filter by publication year (inclusive).
+    """
     from app.services.app_settings import load_app_settings
     from app.services.scholar_search import search_scholar
 
@@ -324,6 +329,8 @@ def scholar_search(
     return search_scholar(
         q,
         limit=limit,
+        year_from=year_from,
+        year_to=year_to,
         semantic_scholar_key=(rules.get("semantic_scholar_api_key") or "").strip() or None,
         openalex_key=(rules.get("openalex_api_key") or "").strip() or None,
     )

@@ -13,6 +13,8 @@ export default function SearchPage() {
   const [q, setQ] = useState(initial);
   const [hits, setHits] = useState([]);
   const [scholarHits, setScholarHits] = useState([]);
+  const [scholarYearFrom, setScholarYearFrom] = useState("");
+  const [scholarYearTo, setScholarYearTo] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,6 +59,20 @@ export default function SearchPage() {
     }
   }
 
+  function applyScholarYearPreset(preset) {
+    const now = new Date().getFullYear();
+    if (preset === "clear") {
+      setScholarYearFrom("");
+      setScholarYearTo("");
+      return;
+    }
+    const years = { "1y": 1, "3y": 3, "5y": 5, "10y": 10 }[preset];
+    if (years) {
+      setScholarYearFrom(String(now - years));
+      setScholarYearTo(String(now));
+    }
+  }
+
   async function runScholarSearch(term) {
     const query = (term ?? q).trim();
     if (query.length < 2) {
@@ -68,14 +84,22 @@ export default function SearchPage() {
     setError("");
     setMessage("");
     try {
-      const res = await api(
-        `/api/workspace/scholar/search?q=${encodeURIComponent(query)}&limit=15`
-      );
+      const params = new URLSearchParams({ q: query, limit: "15" });
+      const yf = String(scholarYearFrom || "").trim();
+      const yt = String(scholarYearTo || "").trim();
+      if (/^\d{4}$/.test(yf)) params.set("year_from", yf);
+      if (/^\d{4}$/.test(yt)) params.set("year_to", yt);
+      const res = await api(`/api/workspace/scholar/search?${params.toString()}`);
       setScholarHits(res.results || []);
+      const yearBit =
+        res.year_from || res.year_to
+          ? ` · published ${res.year_from || "…"}–${res.year_to || "…"}`
+          : "";
       setMessage(
         res.message ||
           `Found ${res.total || 0} scholarly hit(s)` +
             (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
+            yearBit +
             ". Ranked by topic fit + citations + recency."
       );
       if (res.note) setMessage((m) => (m ? `${m} ${res.note}` : res.note));
@@ -280,28 +304,75 @@ export default function SearchPage() {
 
       {tab !== "summarize" && (
         <form
-          className="panel row"
+          className="panel stack"
           onSubmit={(e) => {
             e.preventDefault();
             runSearch();
           }}
         >
-          <label style={{ flex: 1 }}>
-            Query
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={
-                tab === "scholar"
-                  ? "e.g. exposure management prioritization exploitability"
-                  : "e.g. residual risk, BAS, exposure ownership"
-              }
-              autoFocus
-            />
-          </label>
-          <button className="btn primary" type="submit" disabled={busy}>
-            {busy ? "Searching…" : tab === "scholar" ? "Search scholar" : "Search library"}
-          </button>
+          <div className="row">
+            <label style={{ flex: 1 }}>
+              Query
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder={
+                  tab === "scholar"
+                    ? "e.g. exposure management prioritization exploitability"
+                    : "e.g. residual risk, BAS, exposure ownership"
+                }
+                autoFocus
+              />
+            </label>
+            <button className="btn primary" type="submit" disabled={busy}>
+              {busy ? "Searching…" : tab === "scholar" ? "Search scholar" : "Search library"}
+            </button>
+          </div>
+          {tab === "scholar" && (
+            <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+              <label style={{ minWidth: 100 }}>
+                Published from
+                <input
+                  type="number"
+                  min={1990}
+                  max={2100}
+                  step={1}
+                  placeholder="YYYY"
+                  value={scholarYearFrom}
+                  onChange={(e) => setScholarYearFrom(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <label style={{ minWidth: 100 }}>
+                Published to
+                <input
+                  type="number"
+                  min={1990}
+                  max={2100}
+                  step={1}
+                  placeholder="YYYY"
+                  value={scholarYearTo}
+                  onChange={(e) => setScholarYearTo(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("1y")}>
+                Last 1y
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("3y")}>
+                Last 3y
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("5y")}>
+                Last 5y
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("10y")}>
+                Last 10y
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("clear")}>
+                Any year
+              </button>
+            </div>
+          )}
         </form>
       )}
 

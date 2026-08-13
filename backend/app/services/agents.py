@@ -1,4 +1,19 @@
-"""Multi-agent research orchestration using live providers when available."""
+"""Multi-agent research orchestration (desk Research Assistant).
+
+Call chain:
+  POST /api/research/assistant (routers/research.py)
+    -> run_research_panel() here when multi_agent=true
+    -> chat() in llm.py for each live role
+    -> local_research_assist() if no research tokens
+
+Roles (up to 3 research-enabled providers from Security):
+  1) researcher  — first draft
+  2) critic      — gaps, citations, residual risk
+  3) red_team    — attacker / ATT&CK challenge
+  4) synthesizer — merge into one paper section (reuses researcher provider)
+
+Does not write the section body. UI must call /assistant/apply (or Apply to paper).
+"""
 
 from __future__ import annotations
 
@@ -10,6 +25,7 @@ from app.services.ai_style import humanize_text, local_research_assist, strip_ba
 from app.services.llm import chat, list_active_providers
 from app.services.refs_cache import trusted_refs_snippet
 
+# Shared system prompt for every live role. Style rules match product publish voice.
 SYSTEM_BASE = (
     "You are a senior Security Operations research analyst. Focus on Offensive Security, "
     "Exposure Management, and Vulnerability Management. The user is shifting from hands-on "
@@ -32,6 +48,11 @@ def run_research_panel(
     rewrite_human: bool = True,
     evidence_mode: bool = True,
 ) -> dict[str, Any]:
+    """Main multi-model panel. Returns draft content + critique/red_team side panels.
+
+    Returns keys used by desk: content, critique, red_team, used_live, notes, roles.
+    """
+    # Only tokens with Research enabled (Security tab).
     active = list_active_providers(db, purpose="research")
     available = {p["provider"] for p in active}
     requested = providers or ["openai", "anthropic", "xai"]
@@ -47,6 +68,7 @@ def run_research_panel(
         else ""
     )
 
+    # Offline path: no research tokens — template scaffold only (research_scaffold.py).
     if not chosen:
         local = local_research_assist(prompt, context_md, rewrite_human=rewrite_human)
         local["providers_used"] = []
@@ -58,6 +80,7 @@ def run_research_panel(
         local["red_team"] = ""
         return local
 
+    # Map roles to providers (1 key = all roles on same provider; 3 keys = one each).
     role_map = {
         "researcher": chosen[0],
         "critic": chosen[1] if len(chosen) > 1 else chosen[0],
@@ -73,7 +96,7 @@ def run_research_panel(
     roles_out: dict[str, Any] = {}
     errors: list[str] = []
 
-    # Researcher draft
+    # Pass 1: researcher draft
     r = chat(
         db,
         provider=role_map["researcher"],
@@ -89,7 +112,7 @@ def run_research_panel(
         draft = r.content
         roles_out["researcher"] = {"provider": r.provider, "model": r.model, "ok": True}
 
-    # Critic pass
+    # Pass 2: critic (accuracy, citations, residual risk)
     c = chat(
         db,
         provider=role_map["critic"],
@@ -112,7 +135,7 @@ def run_research_panel(
     else:
         roles_out["critic"] = {"provider": c.provider, "model": c.model, "ok": True}
 
-    # Red team / attacker view
+    # Pass 3: red team (attack paths / ATT&CK pressure)
     rt = chat(
         db,
         provider=role_map["red_team"],
@@ -135,7 +158,7 @@ def run_research_panel(
     else:
         roles_out["red_team"] = {"provider": rt.provider, "model": rt.model, "ok": True}
 
-    # Synthesis on primary provider
+    # Pass 4: synthesizer merges draft + critique + red team into one section
     synth = chat(
         db,
         provider=role_map["researcher"],
@@ -166,6 +189,7 @@ def run_research_panel(
     else:
         content = synth.content
 
+    # Local style cleanup only (not a second live rewrite).
     content = strip_banned_style(content)
     if rewrite_human:
         content = humanize_text(content, strength="medium")
@@ -175,15 +199,15 @@ def run_research_panel(
         notes = "Completed with fallbacks: " + " | ".join(errors[:4])
 
     return {
-        "content": content,
-        "agent_chars": len(content),
+        "content": content,  # main Assistant draft text
+        "agent_chars": len(content),  # length only; apply endpoint owns contribution ledger
         "notes": notes,
         "citations": _extract_link_citations(content),
         "providers_used": sorted({role_map[k] for k in role_map}),
         "roles": roles_out,
         "used_live": True,
-        "critique": critique,
-        "red_team": red,
+        "critique": critique,  # shown on desk under Critic
+        "red_team": red,  # shown on desk under Red team
     }
 
 
@@ -195,6 +219,7 @@ def run_single_role(
     prompt: str,
     context_md: str = "",
 ) -> dict[str, Any]:
+    """One-shot live call (multi_agent=false). Falls back to local scaffold on failure."""
     system = SYSTEM_BASE + f" Role: {role}."
     result = chat(
         db,
@@ -228,12 +253,12 @@ def run_single_role(
 
 
 def _extract_link_citations(text: str) -> list[dict[str, str]]:
+    """Pull markdown [title](url) links from generated text for the response payload."""
     import re
 
     cites = []
     for match in re.finditer(r"\[([^\]]+)\]\((https?://[^)]+)\)", text):
         cites.append({"title": match.group(1), "url": match.group(2), "note": "inline"})
-    # de-dupe
     seen = set()
     out = []
     for c in cites:

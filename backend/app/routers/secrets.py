@@ -1,3 +1,9 @@
+"""Security tab API: encrypted provider tokens, usage, kill switch.
+
+Tokens stored in SQLite api_tokens.encrypted_value (Fernet). UI only sees masks.
+list_active_providers() in llm.py reads the same table for live research/judge.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

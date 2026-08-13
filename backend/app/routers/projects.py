@@ -99,10 +99,68 @@ def _serialize_project(db: Session, project: Project) -> ProjectOut:
     )
 
 
+def _align_section_chars_to_body(section: ResearchSection) -> None:
+    """Keep agent/human char ledgers consistent with the current section body.
+
+    - Empty body zeros both counters.
+    - If the agent ledger exceeds the body (typical after deleting an agent draft),
+      treat the residual body as human/seed rather than still 100% agent.
+    - Otherwise clamp total to body length (cut agent first), then fill gaps as human.
+    """
+    text = section.content_md or ""
+    n = len(text)
+    agent = max(0, int(section.agent_chars or 0))
+    human = max(0, int(section.human_chars or 0))
+    if n <= 0:
+        section.agent_chars = 0
+        section.human_chars = 0
+        return
+    # Deleted agent draft left ledger larger than body
+    if agent > n:
+        section.agent_chars = 0
+        section.human_chars = n
+        return
+    total = agent + human
+    if total > n:
+        overflow = total - n
+        cut = min(agent, overflow)
+        agent -= cut
+        overflow -= cut
+        if overflow:
+            human = max(0, human - overflow)
+    elif total < n:
+        human += n - total
+    section.agent_chars = agent
+    section.human_chars = human
+
+
+def _apply_content_char_delta(section: ResearchSection, old_content: str, new_content: str) -> None:
+    """Attribute growth to human; attribute shrink to agent first, then human."""
+    old_len = len(old_content or "")
+    new_len = len(new_content or "")
+    delta = new_len - old_len
+    agent = max(0, int(section.agent_chars or 0))
+    human = max(0, int(section.human_chars or 0))
+    if delta > 0:
+        human += delta
+    elif delta < 0:
+        removed = -delta
+        cut = min(agent, removed)
+        agent -= cut
+        removed -= cut
+        if removed:
+            human = max(0, human - removed)
+    section.agent_chars = agent
+    section.human_chars = human
+    _align_section_chars_to_body(section)
+
+
 def _recalc_contributions(db: Session, project: Project) -> None:
     sections = (
         db.query(ResearchSection).filter(ResearchSection.project_id == project.id).all()
     )
+    for s in sections:
+        _align_section_chars_to_body(s)
     agent = sum(s.agent_chars for s in sections)
     human = sum(s.human_chars for s in sections)
     total = agent + human
@@ -357,17 +415,33 @@ def update_section(
                 label="before-save",
                 created_by=user.username,
             )
-        delta = len(new_content) - len(old_content)
         if "agent_chars" not in data and "human_chars" not in data:
-            if delta > 0:
-                section.human_chars += delta
-            elif delta < 0:
-                section.human_chars = max(0, section.human_chars + delta)
+            _apply_content_char_delta(section, old_content, new_content)
+        else:
+            _align_section_chars_to_body(section)
 
     _recalc_contributions(db, project)
     db.commit()
     db.refresh(section)
     return section
+
+
+@router.post("/{project_id}/resync-contributions", response_model=ProjectOut)
+def resync_project_contributions(
+    project_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> ProjectOut:
+    """Re-align agent/human char ledgers to current section bodies and refresh %.
+
+    Use after deleting agent drafts so the desk metrics are not stuck at 100% agent.
+    """
+    project = _get_project(db, project_id)
+    _recalc_contributions(db, project)
+    project.publish_ready = False
+    db.commit()
+    db.refresh(project)
+    return _serialize_project(db, project)
 
 
 @router.get("/{project_id}/sections/{section_id}/versions")
@@ -471,6 +545,7 @@ def update_task(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> ResearchTask:
+    _get_project(db, project_id)
     task = (
         db.query(ResearchTask)
         .filter(ResearchTask.id == task_id, ResearchTask.project_id == project_id)
@@ -483,6 +558,26 @@ def update_task(
     db.commit()
     db.refresh(task)
     return task
+
+
+@router.delete("/{project_id}/tasks/{task_id}", status_code=204)
+def delete_task(
+    project_id: int,
+    task_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Response:
+    _get_project(db, project_id)
+    task = (
+        db.query(ResearchTask)
+        .filter(ResearchTask.id == task_id, ResearchTask.project_id == project_id)
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.delete(task)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/{project_id}/artifacts", response_model=list[ArtifactOut])

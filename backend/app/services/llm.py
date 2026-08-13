@@ -1,4 +1,15 @@
-"""Multi-provider LLM client (OpenAI, Anthropic, xAI/Grok, Google)."""
+"""Live LLM transport layer (decrypt Security tokens, call vendor APIs).
+
+Callers:
+  - agents.chat roles (research / critic / red_team / synth)
+  - research rewrite (live humanize)
+  - research judge / ai-check live panel
+  - summarize live mode
+
+Tokens: api_tokens table, encrypted_value via security.decrypt_secret.
+purpose=research|judge filters which tokens list_active_providers returns.
+Usage $ estimates: services/usage.py after each successful chat.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.models import ApiToken
 from app.security import decrypt_secret
 
+# Per-provider base URL, default model, and request shape (openai | anthropic | google).
 PROVIDER_DEFAULTS = {
     "openai": {
         "base_url": "https://api.openai.com/v1",
@@ -192,7 +204,10 @@ def list_active_providers(
     *,
     purpose: str = "research",
 ) -> list[dict[str, Any]]:
-    """purpose: research | judge | any"""
+    """Active Security tokens for research panel, judge panel, or any live call.
+
+    purpose: research | judge | any  (filters use_for_research / use_for_judge).
+    """
     q = db.query(ApiToken).filter(ApiToken.is_active.is_(True))
     purpose = (purpose or "research").lower()
     if purpose == "research":
@@ -383,6 +398,10 @@ def chat(
     project_id: int | None = None,
     created_by: str = "",
 ) -> LLMResult:
+    """Single completion. Tries preferred model then fallbacks; logs usage on success.
+
+    purpose tags usage rows (research, research_critic, rewrite_live, judge, ...).
+    """
     from app.services.usage import estimate_cost_usd, estimate_tokens_from_text, log_usage
 
     provider = provider.strip().lower()
@@ -400,6 +419,7 @@ def chat(
             f"No active token for {provider}. Add one in Security.",
         )
 
+    # Plaintext key only in memory for this request.
     api_key = decrypt_secret(token_row.encrypted_value)
     style = meta["style"]
     preferred = model or (getattr(token_row, "model", "") or "").strip() or None

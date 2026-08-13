@@ -20,10 +20,17 @@ export default function ResearchWorkspacePage() {
   const [critique, setCritique] = useState("");
   const [redTeam, setRedTeam] = useState("");
   const [judgeOut, setJudgeOut] = useState(null);
+  /** Latest AI checker result for the active section body (refreshed on demand). */
+  const [sectionAiCheck, setSectionAiCheck] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  /** What long-running desk action is in flight (shown in sticky banner). */
+  const [busyLabel, setBusyLabel] = useState("");
+  const [busyElapsedSec, setBusyElapsedSec] = useState(0);
   const [providers, setProviders] = useState([]);
   const [frameworks, setFrameworks] = useState({ mitre: [], stride: [], saas_packs: [] });
   const [maps, setMaps] = useState([]);
@@ -52,11 +59,16 @@ export default function ResearchWorkspacePage() {
   const [scholarQ, setScholarQ] = useState("");
   const [scholarHits, setScholarHits] = useState([]);
   const [scholarNote, setScholarNote] = useState("");
+  /** Optional publication year range for scholar search (empty = any year). */
+  const [scholarYearFrom, setScholarYearFrom] = useState("");
+  const [scholarYearTo, setScholarYearTo] = useState("");
   const [liveModelOptions, setLiveModelOptions] = useState([
     { id: "auto", label: "Auto (token preferred / fallback)", provider: null, model: null },
   ]);
   const [liveModelId, setLiveModelId] = useState("auto");
   const humanizeRef = useRef(null);
+  const assistantRef = useRef(null);
+  const busyStartedAt = useRef(null);
   const autosaveTimer = useRef(null);
   const saveToastTimer = useRef(null);
 
@@ -132,6 +144,8 @@ export default function ResearchWorkspacePage() {
   useEffect(() => {
     setHumanizeDraft(null);
     setHumanizeUndo(null);
+    setSectionAiCheck(null);
+    setJudgeOut(null);
     setSaveState("saved");
     setSaveToast("");
   }, [sectionId]);
@@ -141,6 +155,37 @@ export default function ResearchWorkspacePage() {
       humanizeRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [humanizeDraft]);
+
+  useEffect(() => {
+    if (assistantOut && assistantRef.current) {
+      assistantRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [assistantOut]);
+
+  useEffect(() => {
+    if (!busy) {
+      busyStartedAt.current = null;
+      setBusyElapsedSec(0);
+      return;
+    }
+    busyStartedAt.current = Date.now();
+    setBusyElapsedSec(0);
+    const t = setInterval(() => {
+      if (!busyStartedAt.current) return;
+      setBusyElapsedSec(Math.floor((Date.now() - busyStartedAt.current) / 1000));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+
+  function beginBusy(label) {
+    setBusy(true);
+    setBusyLabel(label || "Working…");
+  }
+
+  function endBusy() {
+    setBusy(false);
+    setBusyLabel("");
+  }
 
   function flashSaveToast(text) {
     setSaveToast(text);
@@ -213,9 +258,15 @@ export default function ResearchWorkspacePage() {
   }
 
   async function runAssistant() {
-    if (!prompt.trim()) return;
-    setBusy(true);
+    if (!prompt.trim()) {
+      setError("Enter a research prompt for this section first.");
+      return;
+    }
+    beginBusy("Research Assistant (multi-agent)");
     setError("");
+    setMessage(
+      "Research Assistant is running. Multi-agent panel often takes 1–3 minutes; draft appears under the buttons when ready."
+    );
     try {
       if (activeSection) {
         await api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
@@ -240,20 +291,20 @@ export default function ResearchWorkspacePage() {
       setMessage(
         `${result.notes || "Assistant ready."}${
           result.used_live ? " (live providers)" : " (local scaffold)"
-        }`
+        } Review the draft below, then Apply to paper.`
       );
       await loadProject();
       await loadProjectDetails();
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function applyAssistant() {
     if (!assistantOut || !sectionId) return;
-    setBusy(true);
+    beginBusy("Applying assistant draft");
     try {
       const updated = await api("/api/research/assistant/apply", {
         method: "POST",
@@ -270,7 +321,7 @@ export default function ResearchWorkspacePage() {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -278,13 +329,19 @@ export default function ResearchWorkspacePage() {
     if (!activeSection) return;
     const original = activeSection.content_md || "";
     if (!original.trim()) {
-      setError("Section is empty. Write or apply research content first.");
+      setError(
+        "Section paper is empty. Run Research Assistant + Apply to paper first, or write in the paper editor — Live humanize rewrites the section body, not the prompt alone."
+      );
       return;
     }
     const rewriteMode = mode === "live" ? "live" : "local";
-    setBusy(true);
+    beginBusy(rewriteMode === "live" ? "Live humanize (AI rewrite + AI check)" : "Local humanize");
     setError("");
-    setMessage("");
+    setMessage(
+      rewriteMode === "live"
+        ? "Live humanize running: score → rewrite → re-score. Review panel opens below when ready."
+        : "Local humanize running…"
+    );
     try {
       const before = await api("/api/research/ai-check", {
         method: "POST",
@@ -341,7 +398,7 @@ export default function ResearchWorkspacePage() {
     } catch (e) {
       setError(e.message || "Humanize failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -376,7 +433,19 @@ export default function ResearchWorkspacePage() {
 
   function rejectHumanize() {
     setHumanizeDraft(null);
-    setMessage("Humanize draft discarded. Section unchanged.");
+    setError("");
+    setMessage("Humanize rewrite discarded. Section paper was not changed.");
+    // Nudge viewport back to the action row so it is obvious the review panel closed.
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+
+  function dismissAssistantDraft() {
+    setAssistantOut("");
+    setCritique("");
+    setRedTeam("");
+    setMessage("Assistant draft dismissed. Nothing was written to the paper.");
   }
 
   async function undoHumanizeAccept() {
@@ -494,6 +563,56 @@ export default function ResearchWorkspacePage() {
     setGate(res.publish_gate);
     setEvidence(res.evidence);
     setProject((p) => (p ? { ...p, publish_ready: res.publish_ready } : p));
+    return res;
+  }
+
+  async function runSectionAiCheck() {
+    const text = activeSection?.content_md || "";
+    if (!text.trim()) {
+      setSectionAiCheck(null);
+      setError("Section paper is empty — nothing to AI-check. Write or apply research first.");
+      return null;
+    }
+    const result = await api("/api/research/ai-check", {
+      method: "POST",
+      body: JSON.stringify({
+        text,
+        source_label: `desk-section:${activeSection?.id || sectionId}`,
+        mode: "quick",
+      }),
+    });
+    setSectionAiCheck(result);
+    return result;
+  }
+
+  async function refreshDesk({ withAiCheck = true } = {}) {
+    if (!activeId) return;
+    beginBusy("Refreshing desk metrics");
+    setError("");
+    try {
+      // Realign agent/human ledgers to current paper bodies (fixes stuck 100% after deletes)
+      const synced = await api(`/api/projects/${activeId}/resync-contributions`, {
+        method: "POST",
+      });
+      setProject(synced);
+      await loadProjectDetails();
+      await refreshGate();
+      let aiNote = "";
+      if (withAiCheck && activeSection) {
+        const ai = await runSectionAiCheck();
+        if (ai) {
+          aiNote = ` · AI likelihood (current paper) ${ai.ai_pct}%`;
+        }
+      }
+      setMessage(
+        `Desk refreshed. Agent contribution ${synced.agent_contribution_pct}% · human ${synced.human_contribution_pct}%${aiNote}.`
+      );
+      await loadSectionVersions();
+    } catch (e) {
+      setError(e.message || "Refresh failed.");
+    } finally {
+      endBusy();
+    }
   }
 
   async function exportDocx(force = false) {
@@ -526,15 +645,106 @@ export default function ResearchWorkspacePage() {
     }
   }
 
+  function taskIsDone(task) {
+    const s = String(task?.status || "").toLowerCase();
+    return s === "done" || s === "completed";
+  }
+
   async function addTask() {
-    if (!taskTitle.trim() || !activeId) return;
-    await api(`/api/projects/${activeId}/tasks`, {
-      method: "POST",
-      body: JSON.stringify({ title: taskTitle.trim() }),
-    });
-    setTaskTitle("");
-    await loadProjectDetails();
-    await loadProject();
+    if (!taskTitle.trim() || !activeId || isReviewer) return;
+    beginBusy("Adding task");
+    setError("");
+    try {
+      await api(`/api/projects/${activeId}/tasks`, {
+        method: "POST",
+        body: JSON.stringify({ title: taskTitle.trim(), status: "todo" }),
+      });
+      setTaskTitle("");
+      await loadProjectDetails();
+      await loadProject();
+      setMessage("Task added.");
+    } catch (e) {
+      setError(e.message || "Could not add task.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function toggleTaskDone(task) {
+    if (!activeId || !task || isReviewer) return;
+    const next = taskIsDone(task) ? "todo" : "done";
+    beginBusy(next === "done" ? "Marking task done" : "Reopening task");
+    setError("");
+    try {
+      const updated = await api(`/api/projects/${activeId}/tasks/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: next }),
+      });
+      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      await loadProject();
+      setMessage(next === "done" ? "Task completed." : "Task reopened.");
+    } catch (e) {
+      setError(e.message || "Could not update task.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  function startEditTask(task) {
+    if (!task || isReviewer) return;
+    setEditingTaskId(task.id);
+    setEditingTaskTitle(task.title || "");
+  }
+
+  function cancelEditTask() {
+    setEditingTaskId(null);
+    setEditingTaskTitle("");
+  }
+
+  async function saveTaskTitle(task) {
+    if (!activeId || !task || isReviewer) return;
+    const title = editingTaskTitle.trim();
+    if (!title) {
+      setError("Task title cannot be empty.");
+      return;
+    }
+    if (title === task.title) {
+      cancelEditTask();
+      return;
+    }
+    beginBusy("Saving task");
+    setError("");
+    try {
+      const updated = await api(`/api/projects/${activeId}/tasks/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+      setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      cancelEditTask();
+      setMessage("Task updated.");
+    } catch (e) {
+      setError(e.message || "Could not update task.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function deleteTask(task) {
+    if (!activeId || !task || isReviewer) return;
+    if (!window.confirm(`Delete task “${task.title}”?`)) return;
+    beginBusy("Deleting task");
+    setError("");
+    try {
+      await api(`/api/projects/${activeId}/tasks/${task.id}`, { method: "DELETE" });
+      setTasks((prev) => prev.filter((t) => t.id !== task.id));
+      if (editingTaskId === task.id) cancelEditTask();
+      await loadProject();
+      setMessage("Task deleted.");
+    } catch (e) {
+      setError(e.message || "Could not delete task.");
+    } finally {
+      endBusy();
+    }
   }
 
   async function uploadArtifact(e) {
@@ -598,23 +808,68 @@ export default function ResearchWorkspacePage() {
     await loadProjectDetails();
   }
 
+  function scholarYearParams() {
+    const params = new URLSearchParams();
+    const yf = String(scholarYearFrom || "").trim();
+    const yt = String(scholarYearTo || "").trim();
+    if (/^\d{4}$/.test(yf)) params.set("year_from", yf);
+    if (/^\d{4}$/.test(yt)) params.set("year_to", yt);
+    return params;
+  }
+
+  function applyScholarYearPreset(preset) {
+    const now = new Date().getFullYear();
+    if (preset === "clear") {
+      setScholarYearFrom("");
+      setScholarYearTo("");
+      return;
+    }
+    if (preset === "1y") {
+      setScholarYearFrom(String(now - 1));
+      setScholarYearTo(String(now));
+      return;
+    }
+    if (preset === "3y") {
+      setScholarYearFrom(String(now - 3));
+      setScholarYearTo(String(now));
+      return;
+    }
+    if (preset === "5y") {
+      setScholarYearFrom(String(now - 5));
+      setScholarYearTo(String(now));
+      return;
+    }
+    if (preset === "10y") {
+      setScholarYearFrom(String(now - 10));
+      setScholarYearTo(String(now));
+    }
+  }
+
   async function searchScholar(topicOverride) {
     const q = (topicOverride ?? scholarQ).trim();
     if (q.length < 2) {
       setError("Enter a topic of at least 2 characters for scholar search.");
       return;
     }
-    setBusy(true);
+    beginBusy("Scholar search");
     setError("");
     setScholarNote("");
     try {
-      const res = await api(`/api/workspace/scholar/search?q=${encodeURIComponent(q)}&limit=12`);
+      const params = scholarYearParams();
+      params.set("q", q);
+      params.set("limit", "12");
+      const res = await api(`/api/workspace/scholar/search?${params.toString()}`);
       setScholarHits(res.results || []);
       setScholarQ(q);
+      const yearBit =
+        res.year_from || res.year_to
+          ? ` · published ${res.year_from || "…"}–${res.year_to || "…"}`
+          : "";
       setScholarNote(
         res.message ||
           `Found ${res.total || 0} scholarly hit(s)` +
             (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
+            yearBit +
             ". Ranked by topic fit + citations + recency."
       );
       if (res.source_errors?.length) {
@@ -625,7 +880,7 @@ export default function ResearchWorkspacePage() {
     } catch (e) {
       setError(e.message || "Scholar search failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -771,7 +1026,42 @@ export default function ResearchWorkspacePage() {
         </div>
         <div className="row">
           <span className="badge">{providers.length} live providers</span>
-          <button className="btn" type="button" onClick={refreshGate} disabled={busy}>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => refreshDesk({ withAiCheck: true })}
+            disabled={busy}
+            title="Resync agent/human % from current paper, refresh publish gate, re-run AI check on this section"
+          >
+            {busyLabel?.includes("Refreshing") ? "Refreshing…" : "Refresh desk"}
+          </button>
+          <button
+            className="btn"
+            type="button"
+            onClick={async () => {
+              beginBusy("AI check (current section)");
+              setError("");
+              try {
+                const ai = await runSectionAiCheck();
+                if (ai) {
+                  const tip = (ai.recommendations || [])[0];
+                  setMessage(
+                    `AI check (current paper): ${ai.ai_pct}% likelihood` +
+                      (tip ? ` · ${tip}` : "")
+                  );
+                }
+              } catch (e) {
+                setError(e.message || "AI check failed.");
+              } finally {
+                endBusy();
+              }
+            }}
+            disabled={busy || !activeSection}
+            title="Run a fresh local AI-likelihood check on the active section body"
+          >
+            {busyLabel?.includes("AI check") ? "Checking…" : "AI check section"}
+          </button>
+          <button className="btn" type="button" onClick={() => refreshGate()} disabled={busy}>
             Refresh publish gate
           </button>
           <button className="btn primary" type="button" onClick={() => exportDocx(false)} disabled={busy}>
@@ -787,6 +1077,22 @@ export default function ResearchWorkspacePage() {
 
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert ok">{message}</div>}
+      {busy && (
+        <div className="alert warn busy-banner thinking-banner" role="status" aria-live="polite">
+          <span className="thinking-dot" aria-hidden="true" />
+          <div>
+            <strong>Thinking… {busyLabel || "Working"}</strong>
+            <div className="muted" style={{ marginTop: "0.2rem" }}>
+              Button click registered · {busyElapsedSec}s elapsed
+              {busyLabel?.includes("Research Assistant")
+                ? " · multi-agent often takes 1–3 minutes; keep this tab open"
+                : busyLabel?.includes("Live humanize")
+                  ? " · rewrite + AI checks in progress"
+                  : " · please wait"}
+            </div>
+          </div>
+        </div>
+      )}
       {saveToast && (
         <div className={`alert ${saveState === "error" ? "error" : "ok"}`} role="status">
           {saveToast}
@@ -855,10 +1161,33 @@ export default function ResearchWorkspacePage() {
               <strong className={project.agent_contribution_pct >= 10 ? "badge bad" : ""}>
                 {project.agent_contribution_pct}%
               </strong>
+              <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                From paper body · Refresh desk after deletes
+              </div>
             </div>
             <div className="metric">
               <span className="muted">Human contribution</span>
               <strong>{project.human_contribution_pct}%</strong>
+            </div>
+            <div className="metric">
+              <span className="muted">AI check (this section)</span>
+              <strong
+                className={
+                  sectionAiCheck
+                    ? sectionAiCheck.ai_pct >= 10
+                      ? "badge bad"
+                      : "badge good"
+                    : ""
+                }
+                style={{ fontSize: sectionAiCheck ? undefined : "1rem" }}
+              >
+                {sectionAiCheck ? `${sectionAiCheck.ai_pct}%` : "Not run"}
+              </strong>
+              <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                {sectionAiCheck
+                  ? "Latest on current paper"
+                  : "Use AI check section or Refresh desk"}
+              </div>
             </div>
             <div className="metric">
               <span className="muted">Template</span>
@@ -907,7 +1236,7 @@ export default function ResearchWorkspacePage() {
                   </label>
                   <div className="row">
                     <button className="btn primary" onClick={runAssistant} disabled={busy}>
-                      Research Assistant
+                      {busyLabel?.includes("Research Assistant") ? "Researching…" : "Research Assistant"}
                     </button>
                     <button className="btn" onClick={applyAssistant} disabled={!assistantOut || busy}>
                       Apply to paper
@@ -932,15 +1261,15 @@ export default function ResearchWorkspacePage() {
                       disabled={busy || !activeSection}
                       title="Free local style cleanup, then review before save"
                     >
-                      Local humanize
+                      {busyLabel === "Local humanize" ? "Humanizing…" : "Local humanize"}
                     </button>
                     <button
                       className="btn"
                       onClick={() => humanizeSection("live")}
                       disabled={busy || !activeSection}
-                      title="Live rewrite with selected model (same API key)"
+                      title="Live rewrite with selected model (same API key). Rewrites paper body, not the prompt."
                     >
-                      Live humanize
+                      {busyLabel?.includes("Live humanize") ? "Humanizing…" : "Live humanize"}
                     </button>
                     <button className="btn" onClick={judgeSection} disabled={busy}>
                       Judge
@@ -949,14 +1278,44 @@ export default function ResearchWorkspacePage() {
                       Evidence check
                     </button>
                   </div>
+                  {busy && (
+                    <div className="thinking-inline" role="status" aria-live="polite">
+                      <span className="thinking-dot" aria-hidden="true" />
+                      <div>
+                        <strong>Thinking…</strong> {busyLabel || "Working"}
+                        <div className="muted" style={{ fontSize: "0.85rem" }}>
+                          You hit the button · {busyElapsedSec}s · draft/review appears below when finished
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
               {assistantOut && !isReviewer && (
-                <label>
-                  Assistant draft
+                <div className="stack" ref={assistantRef}>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                    <strong>Assistant draft</strong>
+                    <div className="row">
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        onClick={dismissAssistantDraft}
+                        disabled={busy}
+                        title="Clear this draft without writing to the paper"
+                      >
+                        Dismiss draft
+                      </button>
+                      <button className="btn" type="button" onClick={applyAssistant} disabled={busy}>
+                        Apply to paper
+                      </button>
+                    </div>
+                  </div>
                   <textarea value={assistantOut} onChange={(e) => setAssistantOut(e.target.value)} />
-                </label>
+                  <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+                    Not in the paper until you Apply. Dismiss only clears this box.
+                  </p>
+                </div>
               )}
 
               {humanizeDraft && !isReviewer && (
@@ -966,8 +1325,14 @@ export default function ResearchWorkspacePage() {
                       Humanize review · {humanizeDraft.sectionTitle || "section"}
                     </h3>
                     <div className="row">
-                      <button className="btn" type="button" onClick={rejectHumanize} disabled={busy}>
-                        Reject
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={rejectHumanize}
+                        disabled={busy}
+                        title="Discard this rewrite. Paper stays as-is. Does not clear Research Assistant draft."
+                      >
+                        Reject rewrite
                       </button>
                       <button className="btn primary" type="button" onClick={acceptHumanize} disabled={busy}>
                         Accept into section
@@ -1198,7 +1563,8 @@ export default function ResearchWorkspacePage() {
                 <strong>Scholar search</strong>
                 <p className="muted" style={{ margin: 0 }}>
                   Find papers for this topic (Crossref + Semantic Scholar + OpenAlex). Ranked by topic fit,
-                  citations, and recency. Not Google Scholar (no official API).
+                  citations, and recency. Optional publication year filters keep results current. Not Google
+                  Scholar (no official API).
                 </p>
                 <div className="row">
                   <input
@@ -1224,6 +1590,51 @@ export default function ResearchWorkspacePage() {
                     title="Use section title + prompt + project title"
                   >
                     Best for this section
+                  </button>
+                </div>
+                <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+                  <label style={{ minWidth: 100 }}>
+                    Published from
+                    <input
+                      type="number"
+                      min={1990}
+                      max={2100}
+                      step={1}
+                      placeholder="YYYY"
+                      value={scholarYearFrom}
+                      onChange={(e) => setScholarYearFrom(e.target.value)}
+                      disabled={busy}
+                      title="Optional earliest publication year"
+                    />
+                  </label>
+                  <label style={{ minWidth: 100 }}>
+                    Published to
+                    <input
+                      type="number"
+                      min={1990}
+                      max={2100}
+                      step={1}
+                      placeholder="YYYY"
+                      value={scholarYearTo}
+                      onChange={(e) => setScholarYearTo(e.target.value)}
+                      disabled={busy}
+                      title="Optional latest publication year"
+                    />
+                  </label>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("1y")}>
+                    Last 1y
+                  </button>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("3y")}>
+                    Last 3y
+                  </button>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("5y")}>
+                    Last 5y
+                  </button>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("10y")}>
+                    Last 10y
+                  </button>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("clear")}>
+                    Any year
                   </button>
                 </div>
                 {scholarNote && <p className="muted" style={{ margin: 0 }}>{scholarNote}</p>}
@@ -1378,23 +1789,114 @@ export default function ResearchWorkspacePage() {
               {!isReviewer && (
                 <>
                   <h3>Tasks</h3>
+                  <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                    Check to cross off when done. Edit title inline. Open tasks count toward project progress.
+                  </p>
                   <div className="row">
                     <input
                       placeholder="Add research task"
                       value={taskTitle}
                       onChange={(e) => setTaskTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addTask();
+                        }
+                      }}
+                      disabled={busy}
                     />
-                    <button className="btn" onClick={addTask}>
+                    <button className="btn" type="button" onClick={addTask} disabled={busy || !taskTitle.trim()}>
                       Add
                     </button>
                   </div>
-                  <ul className="muted">
-                    {tasks.map((t) => (
-                      <li key={t.id}>
-                        [{t.status}] {t.title}
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="task-list stack">
+                    {!tasks.length && <p className="muted" style={{ margin: 0 }}>No tasks yet.</p>}
+                    {tasks.map((t) => {
+                      const done = taskIsDone(t);
+                      const editing = editingTaskId === t.id;
+                      return (
+                        <div
+                          key={t.id}
+                          className={`task-row row ${done ? "task-done" : ""}`}
+                          style={{ alignItems: "center", gap: "0.5rem" }}
+                        >
+                          <label
+                            className="task-check"
+                            title={done ? "Mark as not done" : "Cross off as done"}
+                            style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={done}
+                              onChange={() => toggleTaskDone(t)}
+                              disabled={busy || editing}
+                            />
+                            <span className="sr-only">{done ? "Done" : "Todo"}</span>
+                          </label>
+                          {editing ? (
+                            <>
+                              <input
+                                style={{ flex: 1 }}
+                                value={editingTaskTitle}
+                                onChange={(e) => setEditingTaskTitle(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    saveTaskTitle(t);
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelEditTask();
+                                  }
+                                }}
+                                disabled={busy}
+                                autoFocus
+                              />
+                              <button className="btn primary" type="button" disabled={busy} onClick={() => saveTaskTitle(t)}>
+                                Save
+                              </button>
+                              <button className="btn ghost" type="button" disabled={busy} onClick={cancelEditTask}>
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span
+                                className="task-title"
+                                style={{
+                                  flex: 1,
+                                  textDecoration: done ? "line-through" : "none",
+                                  opacity: done ? 0.65 : 1,
+                                }}
+                              >
+                                {t.title}
+                              </span>
+                              <span className={`badge ${done ? "good" : ""}`} style={{ fontSize: "0.75rem" }}>
+                                {done ? "done" : t.status || "todo"}
+                              </span>
+                              <button
+                                className="btn ghost"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => startEditTask(t)}
+                                title="Edit task title"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                className="btn ghost"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => deleteTask(t)}
+                                title="Delete task"
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                   <h3>Artifacts</h3>
                   <input type="file" onChange={uploadArtifact} />
                   <ul className="muted">

@@ -1,4 +1,9 @@
-"""Evidence-first claim scanning and citation helpers."""
+"""Evidence scanning + publish gate rules.
+
+analyze_evidence() — find claim-like sentences missing citations (desk Evidence check).
+publish_gate() — ready/blocked from agent %, AI %, evidence coverage (Settings thresholds).
+Used by workspace evidence endpoints and export/docx gate in research.py.
+"""
 
 from __future__ import annotations
 

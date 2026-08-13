@@ -1,9 +1,22 @@
+"""Local (offline) style helpers — no live model required.
+
+Used by:
+  - Research panel post-pass (strip + humanize)
+  - AI Checker quick mode (score_ai_likelihood)
+  - Local humanize on desk / AI Checker
+  - Offline Research Assistant fallback (local_research_assist -> research_scaffold)
+  - Local Judge baseline scores (local_judge)
+
+Live rewrites / multi-model judge still go through routers/research.py + llm.py.
+"""
+
 from __future__ import annotations
 
 import re
 from typing import Any
 
 
+# Stock phrases the product voice bans; also feed AI-likelihood scoring.
 BANNED_PHRASES = [
     r"\bin conclusion\b",
     r"\bfurthermore\b",
@@ -24,6 +37,7 @@ SEMICOLON_PATTERN = re.compile(r";")
 
 
 def strip_banned_style(text: str) -> str:
+    """Remove em dashes, double hyphens, semicolons, and stock AI phrases."""
     cleaned = BANNED_DASH_PATTERN.sub(", ", text)
     cleaned = SEMICOLON_PATTERN.sub(". ", cleaned)
     for pattern in BANNED_PHRASES:
@@ -34,9 +48,8 @@ def strip_banned_style(text: str) -> str:
 
 
 def humanize_text(text: str, strength: str = "medium") -> str:
-    """Rewrite helper that reduces AI-ish cadence without external model calls."""
+    """Rule-based local humanize (free). strength: low | medium | high."""
     text = strip_banned_style(text)
-    # Soften formulaic openers
     replacements = [
         (r"^In today's digital landscape,?\s*", ""),
         (r"^In the realm of\s+", "For "),
@@ -91,7 +104,11 @@ def humanize_text(text: str, strength: str = "medium") -> str:
 
 
 def score_ai_likelihood(text: str) -> dict[str, Any]:
-    """Heuristic AI checker for local offline use. Not a legal detector."""
+    """Local AI % heuristic (quick check + publish gate). Not a forensic detector.
+
+    Signals: sentence length, banned phrases, dashes, passive voice, contractions,
+    vocabulary uniqueness, uniform bullet lists. Caps at 99%.
+    """
     if not text.strip():
         return {
             "ai_pct": 0.0,
@@ -180,13 +197,14 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
 
 
 def local_research_assist(prompt: str, context_md: str = "", rewrite_human: bool = False) -> dict[str, Any]:
-    """Offline research assistant scaffold used until external AI tokens are configured."""
+    """Offline Research Assistant: domain scaffold, not a live model."""
     from app.services.research_scaffold import build_local_scaffold
 
     return build_local_scaffold(prompt, context_md, rewrite_human=rewrite_human)
 
 
 def local_judge(text: str, criteria: list[str]) -> dict[str, Any]:
+    """Cheap local rubric scores (citations, structure, AI %, ethics keywords)."""
     text = text.strip()
     if not text:
         scores = {c: 0.0 for c in criteria}

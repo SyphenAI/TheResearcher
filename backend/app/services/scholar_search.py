@@ -24,6 +24,48 @@ def _relevance(title: str, abstract: str, query: str) -> float:
     return hits / max(len(terms), 1)
 
 
+def _parse_year(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        y = int(str(value).strip()[:4])
+    except (TypeError, ValueError):
+        return None
+    if 1800 <= y <= 2100:
+        return y
+    return None
+
+
+def _normalize_year_range(
+    year_from: int | str | None = None,
+    year_to: int | str | None = None,
+) -> tuple[int | None, int | None]:
+    y_from = _parse_year(year_from)
+    y_to = _parse_year(year_to)
+    if y_from is not None and y_to is not None and y_from > y_to:
+        y_from, y_to = y_to, y_from
+    return y_from, y_to
+
+
+def _year_in_range(
+    year: Any,
+    year_from: int | None,
+    year_to: int | None,
+    *,
+    include_unknown: bool = False,
+) -> bool:
+    if year_from is None and year_to is None:
+        return True
+    y = _parse_year(year)
+    if y is None:
+        return include_unknown
+    if year_from is not None and y < year_from:
+        return False
+    if year_to is not None and y > year_to:
+        return False
+    return True
+
+
 def _score_item(item: dict[str, Any], query: str) -> float:
     rel = _relevance(item.get("title") or "", item.get("abstract") or "", query)
     cites = float(item.get("cited_by_count") or 0)
@@ -50,15 +92,28 @@ def _norm_key(item: dict[str, Any]) -> str:
     return f"t:{title[:80]}"
 
 
-def search_crossref(query: str, *, limit: int = 10) -> list[dict[str, Any]]:
+def search_crossref(
+    query: str,
+    *,
+    limit: int = 10,
+    year_from: int | None = None,
+    year_to: int | None = None,
+) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if len(q) < 2:
         return []
+    filters: list[str] = []
+    if year_from is not None:
+        filters.append(f"from-pub-date:{year_from}-01-01")
+    if year_to is not None:
+        filters.append(f"until-pub-date:{year_to}-12-31")
+    filter_q = f"&filter={quote(','.join(filters))}" if filters else ""
     url = (
         "https://api.crossref.org/works"
         f"?query={quote(q)}&rows={max(1, min(limit, 20))}"
         "&select=DOI,title,author,published-print,published-online,container-title,"
         "abstract,URL,is-referenced-by-count,type"
+        f"{filter_q}"
         "&mailto=researcher@localhost"
     )
     try:
@@ -119,14 +174,24 @@ def search_semantic_scholar(
     *,
     limit: int = 10,
     api_key: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
 ) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if len(q) < 2:
         return []
     fields = "title,authors,year,abstract,url,citationCount,externalIds,venue"
+    # Semantic Scholar accepts year=YYYY or year=YYYY-YYYY (open ends with trailing/leading -)
+    year_q = ""
+    if year_from is not None and year_to is not None:
+        year_q = f"&year={year_from}-{year_to}"
+    elif year_from is not None:
+        year_q = f"&year={year_from}-"
+    elif year_to is not None:
+        year_q = f"&year=-{year_to}"
     url = (
         "https://api.semanticscholar.org/graph/v1/paper/search"
-        f"?query={quote(q)}&limit={max(1, min(limit, 20))}&fields={fields}"
+        f"?query={quote(q)}&limit={max(1, min(limit, 20))}&fields={fields}{year_q}"
     )
     headers = {"User-Agent": USER_AGENT}
     if api_key:
@@ -173,15 +238,24 @@ def search_openalex(
     *,
     limit: int = 10,
     api_key: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
 ) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if len(q) < 2:
         return []
+    filters: list[str] = []
+    if year_from is not None:
+        filters.append(f"from_publication_date:{year_from}-01-01")
+    if year_to is not None:
+        filters.append(f"to_publication_date:{year_to}-12-31")
+    filter_q = f"&filter={quote(','.join(filters))}" if filters else ""
     url = (
         "https://api.openalex.org/works"
         f"?search={quote(q)}&per_page={max(1, min(limit, 20))}"
         "&select=id,doi,title,authorships,publication_year,cited_by_count,"
         "primary_location,abstract_inverted_index,type"
+        f"{filter_q}"
     )
     headers = {"User-Agent": USER_AGENT}
     if api_key:
@@ -249,8 +323,13 @@ def search_scholar(
     sources: list[str] | None = None,
     semantic_scholar_key: str | None = None,
     openalex_key: str | None = None,
+    year_from: int | str | None = None,
+    year_to: int | str | None = None,
 ) -> dict[str, Any]:
-    """Search multiple scholarly APIs and rank for topic fit + impact."""
+    """Search multiple scholarly APIs and rank for topic fit + impact.
+
+    Optional year_from / year_to (publication year) filter providers when set.
+    """
     q = (query or "").strip()
     if len(q) < 2:
         return {
@@ -258,9 +337,12 @@ def search_scholar(
             "total": 0,
             "results": [],
             "sources_tried": [],
+            "year_from": None,
+            "year_to": None,
             "message": "Type at least 2 characters.",
         }
 
+    y_from, y_to = _normalize_year_range(year_from, year_to)
     wanted = sources or ["crossref", "semantic_scholar", "openalex"]
     wanted = [s.lower().strip() for s in wanted if s]
     per = max(5, min(int(limit or 12), 20))
@@ -271,6 +353,8 @@ def search_scholar(
     def _add_all(rows: list[dict[str, Any]], source_name: str) -> None:
         sources_tried.append(source_name)
         for row in rows:
+            if not _year_in_range(row.get("year"), y_from, y_to, include_unknown=False):
+                continue
             key = _norm_key(row)
             if key in merged:
                 # Prefer richer abstract / higher cite count.
@@ -290,14 +374,23 @@ def search_scholar(
 
     if "crossref" in wanted:
         try:
-            _add_all(search_crossref(q, limit=per), "crossref")
+            _add_all(
+                search_crossref(q, limit=per, year_from=y_from, year_to=y_to),
+                "crossref",
+            )
         except Exception as exc:  # noqa: BLE001
             source_errors.append(f"crossref: {exc}")
 
     if "semantic_scholar" in wanted:
         try:
             _add_all(
-                search_semantic_scholar(q, limit=per, api_key=semantic_scholar_key),
+                search_semantic_scholar(
+                    q,
+                    limit=per,
+                    api_key=semantic_scholar_key,
+                    year_from=y_from,
+                    year_to=y_to,
+                ),
                 "semantic_scholar",
             )
         except Exception as exc:  # noqa: BLE001
@@ -305,7 +398,13 @@ def search_scholar(
 
     if "openalex" in wanted:
         try:
-            rows = search_openalex(q, limit=per, api_key=openalex_key)
+            rows = search_openalex(
+                q,
+                limit=per,
+                api_key=openalex_key,
+                year_from=y_from,
+                year_to=y_to,
+            )
             if rows:
                 _add_all(rows, "openalex")
             else:
@@ -324,10 +423,31 @@ def search_scholar(
         key=lambda r: (
             -float(r.get("score") or 0),
             -int(r.get("cited_by_count") or 0),
-            str(r.get("year") or ""),
+            -(_parse_year(r.get("year")) or 0),
         )
     )
     results = results[: max(1, min(int(limit or 12), 25))]
+
+    year_note = ""
+    year_label = ""
+    if y_from is not None or y_to is not None:
+        lo = str(y_from) if y_from is not None else "…"
+        hi = str(y_to) if y_to is not None else "…"
+        year_label = f"{lo}–{hi}"
+        year_note = f" Published {year_label}."
+
+    if results:
+        empty_msg = ""
+    elif year_label:
+        empty_msg = (
+            f"No scholarly hits in {year_label}. "
+            "Try a shorter topic, widen the year range, or clear the year filters."
+        )
+    else:
+        empty_msg = (
+            "No scholarly hits. Try a shorter topic phrase, technique name, "
+            "or standard (e.g. MITRE ATT&CK exposure management)."
+        )
 
     return {
         "query": q,
@@ -335,15 +455,14 @@ def search_scholar(
         "results": results,
         "sources_tried": sources_tried,
         "source_errors": source_errors,
-        "message": (
-            ""
-            if results
-            else "No scholarly hits. Try a shorter topic phrase, technique name, or standard (e.g. MITRE ATT&CK exposure management)."
-        ),
+        "year_from": y_from,
+        "year_to": y_to,
+        "message": empty_msg,
         "note": (
             "Ranked by topic match + citation impact + recency. "
             "Crossref is always free. Semantic Scholar works lightly without a key. "
             "OpenAlex may need a free API key in Settings."
+            + year_note
         ),
     }
 
