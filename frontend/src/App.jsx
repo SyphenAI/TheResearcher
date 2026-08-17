@@ -11,6 +11,7 @@ import UsersPage from "./pages/UsersPage";
 import HealthPage from "./pages/HealthPage";
 import SettingsPage from "./pages/SettingsPage";
 import SearchPage from "./pages/SearchPage";
+import PaperDiffPage from "./pages/PaperDiffPage";
 
 function Shell({ children }) {
   const { user, logout } = useAuth();
@@ -108,6 +109,7 @@ export default function App() {
       <Route path="/change-password" element={<ChangePasswordPage />} />
       <Route path="/app" element={<PrivateRoute><HomeDashboardPage /></PrivateRoute>} />
       <Route path="/app/research/:projectId" element={<PrivateRoute><ResearchWorkspacePage /></PrivateRoute>} />
+      <Route path="/app/research/:projectId/diff" element={<PrivateRoute><PaperDiffPage /></PrivateRoute>} />
       <Route path="/search" element={<PrivateRoute><SearchPage /></PrivateRoute>} />
       <Route path="/security" element={<PrivateRoute><SecurityPage /></PrivateRoute>} />
       <Route path="/settings" element={<PrivateRoute><SettingsPage /></PrivateRoute>} />

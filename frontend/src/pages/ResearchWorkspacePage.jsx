@@ -64,6 +64,8 @@ export default function ResearchWorkspacePage() {
   const [sectionVersions, setSectionVersions] = useState([]);
   const [paperReleases, setPaperReleases] = useState([]);
   const [commitNote, setCommitNote] = useState("");
+  const [diffLeftId, setDiffLeftId] = useState("");
+  const [diffRightId, setDiffRightId] = useState("");
   const [checklistMd, setChecklistMd] = useState("");
   const [scholarQ, setScholarQ] = useState("");
   const [scholarHits, setScholarHits] = useState([]);
@@ -311,6 +313,24 @@ export default function ResearchWorkspacePage() {
     } finally {
       endBusy();
     }
+  }
+
+  function openVersionDiffTab(leftId, rightId) {
+    if (!project?.id) return;
+    const L = leftId || diffLeftId;
+    const R = rightId || diffRightId;
+    if (!L || !R) {
+      setError("Pick two commits/primary releases for the diff (Left and Right).");
+      return;
+    }
+    if (String(L) === String(R)) {
+      setError("Choose two different versions to compare.");
+      return;
+    }
+    const url = `/app/research/${project.id}/diff?left=${encodeURIComponent(L)}&right=${encodeURIComponent(R)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    setError("");
+    setMessage("Opened version diff in a new tab.");
   }
 
   async function restorePaperRelease(releaseId, label) {
@@ -2509,9 +2529,20 @@ export default function ResearchWorkspacePage() {
                   <div className="panel stack" style={{ padding: "0.65rem" }}>
                     <div className="row" style={{ justifyContent: "space-between" }}>
                       <strong>Paper releases (Commit / Primary)</strong>
-                      <button className="btn ghost" type="button" onClick={loadPaperReleases} disabled={busy}>
-                        Refresh
-                      </button>
+                      <div className="row">
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={busy || paperReleases.length < 2}
+                          onClick={() => openVersionDiffTab()}
+                          title="Open red/green diff of two saved versions in a new browser tab"
+                        >
+                          Diff in new tab
+                        </button>
+                        <button className="btn ghost" type="button" onClick={loadPaperReleases} disabled={busy}>
+                          Refresh
+                        </button>
+                      </div>
                     </div>
                     <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
                       Working <strong>v{project?.working_version || "0.1.1"}</strong>
@@ -2526,6 +2557,48 @@ export default function ResearchWorkspacePage() {
                       . Save never bumps version. Commit freezes a snapshot then patches (…0.1.19).
                       Publish primary freezes official major.0.0 and starts the next workline (1.1.1).
                     </p>
+                    {paperReleases.length >= 2 && (
+                      <div className="row" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
+                        <label style={{ minWidth: 160, flex: 1 }}>
+                          Diff left (base)
+                          <select
+                            value={diffLeftId}
+                            onChange={(e) => setDiffLeftId(e.target.value)}
+                            disabled={busy}
+                          >
+                            <option value="">— choose —</option>
+                            {paperReleases.map((r) => (
+                              <option key={`L-${r.id}`} value={r.id}>
+                                v{r.version_label} · {r.kind}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={{ minWidth: 160, flex: 1 }}>
+                          Diff right (newer)
+                          <select
+                            value={diffRightId}
+                            onChange={(e) => setDiffRightId(e.target.value)}
+                            disabled={busy}
+                          >
+                            <option value="">— choose —</option>
+                            {paperReleases.map((r) => (
+                              <option key={`R-${r.id}`} value={r.id}>
+                                v{r.version_label} · {r.kind}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={busy || !diffLeftId || !diffRightId}
+                          onClick={() => openVersionDiffTab()}
+                        >
+                          Open diff
+                        </button>
+                      </div>
+                    )}
                     {!paperReleases.length && (
                       <p className="muted" style={{ margin: 0 }}>
                         No commits yet. Hit <strong>Commit</strong> in the header when you want an
@@ -2561,16 +2634,36 @@ export default function ResearchWorkspacePage() {
                             </div>
                           )}
                         </div>
-                        {!isReviewer && (
+                        <div className="row">
                           <button
                             className="btn ghost"
                             type="button"
                             disabled={busy}
-                            onClick={() => restorePaperRelease(r.id, r.version_label)}
+                            title="Use as left side of diff"
+                            onClick={() => setDiffLeftId(String(r.id))}
                           >
-                            Restore
+                            As left
                           </button>
-                        )}
+                          <button
+                            className="btn ghost"
+                            type="button"
+                            disabled={busy}
+                            title="Use as right side of diff"
+                            onClick={() => setDiffRightId(String(r.id))}
+                          >
+                            As right
+                          </button>
+                          {!isReviewer && (
+                            <button
+                              className="btn ghost"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => restorePaperRelease(r.id, r.version_label)}
+                            >
+                              Restore
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

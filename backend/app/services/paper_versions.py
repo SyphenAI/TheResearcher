@@ -252,8 +252,8 @@ def restore_release(
     }
 
 
-def release_to_dict(row: PaperRelease) -> dict[str, Any]:
-    return {
+def release_to_dict(row: PaperRelease, *, include_snapshot: bool = False) -> dict[str, Any]:
+    out = {
         "id": row.id,
         "project_id": row.project_id,
         "version_label": row.version_label,
@@ -264,6 +264,40 @@ def release_to_dict(row: PaperRelease) -> dict[str, Any]:
         "created_by": row.created_by or "",
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
+    if include_snapshot:
+        sections, combined = snapshot_as_paper(row)
+        out["sections"] = sections
+        out["combined_md"] = combined
+    return out
+
+
+def snapshot_as_paper(row: PaperRelease) -> tuple[list[dict[str, Any]], str]:
+    """Parse release snapshot into section list + joined markdown for diffing."""
+    try:
+        snap = json.loads(row.snapshot_json or "[]")
+    except json.JSONDecodeError:
+        snap = []
+    if not isinstance(snap, list):
+        snap = []
+    sections: list[dict[str, Any]] = []
+    parts: list[str] = []
+    for s in snap:
+        if not isinstance(s, dict):
+            continue
+        title = str(s.get("title") or "Section")
+        body = str(s.get("content_md") or "")
+        sections.append(
+            {
+                "section_id": s.get("section_id"),
+                "title": title,
+                "sort_order": s.get("sort_order", 0),
+                "prompt": s.get("prompt") or "",
+                "content_md": body,
+            }
+        )
+        parts.append(body if body.strip() else f"# {title}\n\n")
+    combined = "\n\n---\n\n".join(parts)
+    return sections, combined
 
 
 def version_meta(project: Project) -> dict[str, Any]:

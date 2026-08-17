@@ -313,6 +313,47 @@ def list_paper_releases(
     }
 
 
+@router.get("/{project_id}/paper-releases/{release_id}")
+def get_paper_release(
+    project_id: int,
+    release_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """One release with full section snapshot (for restore/diff)."""
+    from app.services.paper_versions import get_release, release_to_dict
+
+    _get_project(db, project_id)
+    row = get_release(db, project_id, release_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Release not found")
+    return release_to_dict(row, include_snapshot=True)
+
+
+@router.get("/{project_id}/paper-diff")
+def paper_diff(
+    project_id: int,
+    left: int,
+    right: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Compare two paper releases (left = older/base, right = newer)."""
+    from app.services.paper_versions import get_release, release_to_dict
+
+    project = _get_project(db, project_id)
+    left_row = get_release(db, project_id, left)
+    right_row = get_release(db, project_id, right)
+    if not left_row or not right_row:
+        raise HTTPException(status_code=404, detail="One or both releases not found")
+    return {
+        "project_id": project_id,
+        "project_title": project.title,
+        "left": release_to_dict(left_row, include_snapshot=True),
+        "right": release_to_dict(right_row, include_snapshot=True),
+    }
+
+
 @router.post("/{project_id}/paper/commit")
 def commit_paper_version(
     project_id: int,
