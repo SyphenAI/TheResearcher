@@ -8,6 +8,17 @@ TheResearcher_dev_pat.txt.txt
 !.env.example
 Senior Director*.txt
 
+# Interview / Gartner topic materials (local only — never commit)
+# Prefer dropping everything under local/ (already ignored). Extra patterns below.
+*Gartner*topic*
+*gartner*topic*
+*interview*topic*
+interview_topics/
+Gartner/
+*ITRBP*
+*MarComm*
+Analyst Writing Template*
+
 # Local-only agent / session handoff notes (never commit)
 local/
 SESSION_HANDOFF.md
