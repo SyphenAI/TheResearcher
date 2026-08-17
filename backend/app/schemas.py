@@ -336,6 +336,8 @@ class ExportRequest(BaseModel):
     content_md: str
     project_id: int | None = None
     force: bool = False
+    # Paper-area "Download Word" while drafting — skips publish gate, still converts MD→DOCX.
+    as_draft: bool = False
 
 
 class HealthOut(BaseModel):

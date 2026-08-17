@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -805,17 +806,22 @@ def export_docx(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    from app.services.evidence import analyze_evidence, publish_gate
+    """Convert markdown paper to Word and download.
 
+    as_draft=true: paper-area download while writing (skip publish gate).
+    force=true: admin override when gate blocks official export.
+    """
+    from app.services.evidence import analyze_evidence, publish_gate
     from app.services.app_settings import load_app_settings
 
     rules = load_app_settings()
-    if body.project_id and not body.force:
+    as_draft = bool(getattr(body, "as_draft", False))
+    # Draft downloads from the paper editor always convert MD→DOCX without gate.
+    if body.project_id and not body.force and not as_draft:
         project = db.query(Project).filter(Project.id == body.project_id).first()
         if project:
             evidence = analyze_evidence(body.content_md)
             ai = score_ai_likelihood(body.content_md)
-            # Project max can be looser than global, but not tighter unless set lower intentionally
             project_max = float(getattr(project, "max_agent_pct", None) or rules["max_agent_pct"])
             gate = publish_gate(
                 agent_pct=float(project.agent_contribution_pct or 0),
@@ -827,22 +833,22 @@ def export_docx(
                 raise HTTPException(
                     status_code=409,
                     detail={
-                        "message": "Publish gate blocked export. Adjust content or relax rules in Settings.",
+                        "message": "Publish gate blocked export. Adjust content or use Download Word (draft) in the paper area.",
                         "publish_gate": gate,
                     },
                 )
-            if body.force and not rules.get("allow_force_export", True):
-                raise HTTPException(status_code=403, detail="Force export is disabled in Settings.")
             project.publish_ready = True
             db.commit()
-    elif body.force and not rules.get("allow_force_export", True):
+    if body.force and not as_draft and not rules.get("allow_force_export", True):
         raise HTTPException(status_code=403, detail="Force export is disabled in Settings.")
 
     from app.services.storage_paths import exports_dir
 
     data = markdown_to_docx_bytes(body.title, body.content_md)
-    filename = f"{body.title.replace(' ', '_')[:40] or 'research'}.docx"
-    if body.project_id:
+    safe = re.sub(r"[^\w\-]+", "_", (body.title or "research").strip())[:48] or "research"
+    suffix = "_draft" if as_draft else ""
+    filename = f"{safe}{suffix}.docx"
+    if body.project_id and not as_draft:
         project = db.query(Project).filter(Project.id == body.project_id).first()
         if project and not getattr(project, "archived", False):
             out_dir = exports_dir(project.id, project.title)

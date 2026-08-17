@@ -41,7 +41,8 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 | P02 | Diagram / visualization generator | completed | Mermaid attack/STRIDE/controls + insert into paper |
 | P03 | MITRE + STRIDE structured assessment UI | partial | Desk framework maps + assistant framing; not a full standalone assessor |
 | P04 | SaaS control review templates | partial | Control packs + templates; can deepen later |
-| P05 | Gartner-style / domain research templates | partial | Template store + domain scaffolds (OffSec / EM / VM / tester→analyst) |
+| P05 | Gartner-style / domain research templates | partial | Template store + domain scaffolds; **Analyst Insights note (ITRBP)** pack for writing exercise structure |
+| P05b | Paper-area MD → Word download | completed | Download Word (section) + full paper; `as_draft` skips publish gate; improved export_docx tables/code |
 | P06 | Peer review workflow | partial | Peer review list/add on desk; not multi-user collab |
 | P07 | Citation manager + scholar search | completed | APA-style fields; Crossref + Semantic Scholar + OpenAlex; year_from/year_to filters |
 | P08 | MFA for local accounts | not started | Password auth only |

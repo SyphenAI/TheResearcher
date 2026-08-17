@@ -615,33 +615,83 @@ export default function ResearchWorkspacePage() {
     }
   }
 
-  async function exportDocx(force = false) {
+  async function downloadDocxBlob(res, filename) {
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function safeFilename(name) {
+    return String(name || "research")
+      .replace(/[^\w\-]+/g, "_")
+      .replace(/_+/g, "_")
+      .slice(0, 48) || "research";
+  }
+
+  /**
+   * Markdown → Word download.
+   * scope: "section" | "all"
+   * asDraft: paper-area download (skips publish gate)
+   * force: admin override on gated export
+   */
+  async function exportDocx(opts = {}) {
     if (!project) return;
-    setBusy(true);
+    const scope = opts.scope || "all";
+    const asDraft = !!opts.asDraft;
+    const force = !!opts.force;
+    let content_md = "";
+    let title = project.title || "Research";
+    if (scope === "section") {
+      if (!activeSection) {
+        setError("Select a section to export.");
+        return;
+      }
+      content_md = activeSection.content_md || "";
+      title = `${project.title} — ${activeSection.title || "section"}`;
+    } else {
+      content_md = sections
+        .map((s) => s.content_md || "")
+        .filter((t) => t.trim())
+        .join("\n\n---\n\n");
+    }
+    if (!content_md.trim()) {
+      setError("Nothing to export — paper is empty.");
+      return;
+    }
+    beginBusy(asDraft ? "Converting markdown to Word…" : "Exporting Word…");
     setError("");
     try {
-      const combined = sections.map((s) => s.content_md).join("\n\n---\n\n");
       const res = await api("/api/research/export/docx", {
         method: "POST",
         body: JSON.stringify({
-          title: project.title,
-          content_md: combined,
+          title,
+          content_md,
           project_id: activeId,
           force,
+          as_draft: asDraft,
         }),
       });
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${project.title.replace(/\s+/g, "_")}.docx`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setMessage(force ? "Exported with force override." : "Exported. Publish gate passed.");
+      const suffix = asDraft ? "_draft" : "";
+      const base =
+        scope === "section"
+          ? `${safeFilename(project.title)}_${safeFilename(activeSection?.title || "section")}`
+          : safeFilename(project.title);
+      await downloadDocxBlob(res, `${base}${suffix}.docx`);
+      setMessage(
+        asDraft
+          ? `Word download ready (${scope === "section" ? "this section" : "full paper"}). Markdown converted to .docx.`
+          : force
+            ? "Exported with force override."
+            : "Exported. Publish gate passed."
+      );
     } catch (e) {
       setError(typeof e.message === "string" ? e.message : JSON.stringify(e.message));
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -1064,11 +1114,22 @@ export default function ResearchWorkspacePage() {
           <button className="btn" type="button" onClick={() => refreshGate()} disabled={busy}>
             Refresh publish gate
           </button>
-          <button className="btn primary" type="button" onClick={() => exportDocx(false)} disabled={busy}>
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => exportDocx({ scope: "all", asDraft: false })}
+            disabled={busy}
+            title="Full paper Word export (publish gate applies)"
+          >
             Export Word
           </button>
           {user?.role === "admin" && (
-            <button className="btn ghost" type="button" onClick={() => exportDocx(true)} disabled={busy}>
+            <button
+              className="btn ghost"
+              type="button"
+              onClick={() => exportDocx({ scope: "all", force: true })}
+              disabled={busy}
+            >
               Force export
             </button>
           )}
@@ -1968,6 +2029,28 @@ export default function ResearchWorkspacePage() {
                       Save now
                     </button>
                   )}
+                  {!isReviewer && (
+                    <button
+                      className="btn primary"
+                      type="button"
+                      disabled={busy || !activeSection}
+                      onClick={() => exportDocx({ scope: "section", asDraft: true })}
+                      title="Convert this section markdown to Word and download (no publish gate)"
+                    >
+                      Download Word
+                    </button>
+                  )}
+                  {!isReviewer && (
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => exportDocx({ scope: "all", asDraft: true })}
+                      title="Convert full paper markdown to Word and download (no publish gate)"
+                    >
+                      Download full paper
+                    </button>
+                  )}
                 </div>
               </div>
               {rightTab === "paper" ? (
@@ -1991,7 +2074,9 @@ export default function ResearchWorkspacePage() {
                   />
                   <p className="footer-note">
                     Autosaves ~3s after you pause typing; also saves on blur and Save now. Humanize
-                    requires Accept (then Undo humanize once if needed).
+                    requires Accept (then Undo humanize once if needed).{" "}
+                    <strong>Download Word</strong> converts markdown → .docx for this section;{" "}
+                    <strong>Download full paper</strong> joins all sections.
                   </p>
                   {!isReviewer && (
                     <div className="panel stack" style={{ padding: "0.65rem" }}>

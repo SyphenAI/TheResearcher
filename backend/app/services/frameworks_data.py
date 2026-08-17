@@ -414,4 +414,105 @@ PROJECT_TEMPLATES = {
             ),
         ),
     },
+    # Insights-style writing pack aligned to analyst exercise structure
+    # (Title → Summary → Key Challenges → Recommendations → Analysis → Conclusion).
+    "itrbp_insights": {
+        "title": "Analyst Insights note (ITRBP)",
+        "description": (
+            "Timed insights-note structure: clear position, audience-aware summary, key challenges, "
+            "top recommendations, analysis with three expanded recommendations, and a short conclusion. "
+            "Use for interview writing practice and leadership-facing notes."
+        ),
+        "sections": [
+            "Title",
+            "Summary",
+            "Key Challenges",
+            "Recommendations",
+            "Analysis",
+            "Conclusion",
+        ],
+        "section_defs": _defs(
+            (
+                "Title",
+                "Write a specific, decision-oriented title. Avoid vague labels.",
+                "Working title:\n\n"
+                "One-line promise (what the reader will decide or understand):\n",
+            ),
+            (
+                "Summary",
+                (
+                    "Articulate the core challenge/problem, how this note addresses it, "
+                    "and the intended audience (e.g. CISO, CIO, SecOps lead, IT director)."
+                ),
+                "**Core problem**\n"
+                "\n"
+                "**How this note addresses it**\n"
+                "\n"
+                "**Intended audience**\n"
+                "- Primary:\n"
+                "- Secondary:\n"
+                "\n"
+                "**Position in one sentence**\n"
+                "\n",
+            ),
+            (
+                "Key Challenges",
+                "List the 3–5 challenges that matter to the audience. Be concrete; no filler.",
+                "1. \n"
+                "2. \n"
+                "3. \n"
+                "4. \n"
+                "\n"
+                "Why these challenges matter now:\n",
+            ),
+            (
+                "Recommendations",
+                "State 3 clear recommendations up front. Each should be actionable for the audience.",
+                "1. **Recommendation 1:** \n"
+                "2. **Recommendation 2:** \n"
+                "3. **Recommendation 3:** \n"
+                "\n"
+                "What success looks like if the reader acts:\n",
+            ),
+            (
+                "Analysis",
+                (
+                    "Heart of the note: insights, assumptions, evidence, and expansion of each recommendation. "
+                    "Suggested flow: Introduction → Rec 1 + expansion → Rec 2 + expansion → Rec 3 + expansion. "
+                    "Tables/diagrams allowed. Take a clear position."
+                ),
+                "### Introduction\n"
+                "Business challenges and why status quo fails:\n\n"
+                "Key assumptions:\n"
+                "- \n\n"
+                "Evidence and signals (link sources; mark confidence):\n"
+                "- \n\n"
+                "### Recommendation 1\n"
+                "**Statement:** \n\n"
+                "Expansion (why it works, who owns it, what changes):\n\n"
+                "Evidence:\n"
+                "- \n\n"
+                "### Recommendation 2\n"
+                "**Statement:** \n\n"
+                "Expansion:\n\n"
+                "Evidence:\n"
+                "- \n\n"
+                "### Recommendation 3\n"
+                "**Statement:** \n\n"
+                "Expansion:\n\n"
+                "Evidence:\n"
+                "- \n\n"
+                "### Tradeoffs and residual risk\n"
+                "What you are not solving yet:\n\n"
+                "Residual risk after these moves:\n",
+            ),
+            (
+                "Conclusion",
+                "Short close: reinforce position, primary takeaway, and next decision for the reader.",
+                "Primary takeaway:\n\n"
+                "Decision for the reader:\n\n"
+                "If they do nothing next quarter:\n",
+            ),
+        ),
+    },
 }
