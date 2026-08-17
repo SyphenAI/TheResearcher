@@ -4,6 +4,36 @@ import { api } from "../api/client";
 import { useAuth } from "../api/auth";
 import TextDiffPanes from "../components/TextDiffPanes";
 
+/** Compact help control — hover/focus for tooltip, click toggles short panel. */
+function HelpIcon({ label = "Help", children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="help-icon-wrap">
+      <button
+        type="button"
+        className="help-icon"
+        aria-label={label}
+        title={typeof children === "string" ? children : label}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        ?
+      </button>
+      {open && (
+        <span className="help-pop" role="note">
+          {children}
+          <button type="button" className="btn ghost" style={{ marginTop: "0.35rem" }} onClick={() => setOpen(false)}>
+            Close
+          </button>
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function ResearchWorkspacePage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -1378,9 +1408,24 @@ export default function ResearchWorkspacePage() {
                 Primary — none yet
               </span>
             )}
-            <span className="muted" style={{ fontSize: "0.8rem" }}>
-              Save = keep draft · Commit = snapshot + bump patch · Publish primary = freeze major.0.0
-            </span>
+            <HelpIcon label="Version help">
+              <strong>Versions</strong>
+              <div style={{ marginTop: "0.35rem" }}>
+                <div>
+                  <strong>Save</strong> keeps the draft only (version stays the same).
+                </div>
+                <div>
+                  <strong>Commit</strong> freezes a full-paper snapshot, then bumps patch (0.1.1 → 0.1.2).
+                </div>
+                <div>
+                  <strong>Publish primary</strong> freezes official major.0.0 (e.g. 1.0.0); work continues on
+                  major.1.1.
+                </div>
+                <div style={{ marginTop: "0.35rem" }}>
+                  Example: work 0.1.1…0.1.19 → Publish → primary 1.0.0, then next commits on 1.1.1…
+                </div>
+              </div>
+            </HelpIcon>
           </div>
           <p className="muted" style={{ margin: "0.25rem 0 0" }}>
             Panel research desk for OffSec · Exposure · VM.
@@ -2403,13 +2448,44 @@ export default function ResearchWorkspacePage() {
               </div>
               {rightTab === "paper" ? (
                 <>
+                  <textarea
+                    ref={paperEditorRef}
+                    style={{ minHeight: 560 }}
+                    lang="en"
+                    spellCheck
+                    autoCorrect="on"
+                    autoCapitalize="sentences"
+                    value={activeSection?.content_md || ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSaveState("dirty");
+                      setSections((prev) =>
+                        prev.map((s) => (s.id === sectionId ? { ...s, content_md: val } : s))
+                      );
+                    }}
+                    onBlur={(e) => {
+                      if (saveState === "dirty" || saveState === "error") {
+                        saveSectionContent(e.target.value, { reason: "blur" }).catch(() => {});
+                      }
+                    }}
+                    readOnly={isReviewer}
+                  />
                   {!isReviewer && (
                     <div className="panel stack spell-tools" style={{ padding: "0.65rem" }}>
                       <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                        <strong>Spell help · find &amp; replace</strong>
-                        <span className="muted" style={{ fontSize: "0.8rem" }}>
-                          Red underlines = browser spellcheck (right‑click for suggestions)
-                        </span>
+                        <div className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
+                          <strong>Spell check · find &amp; replace</strong>
+                          <HelpIcon label="Spell check help">
+                            <div>
+                              Red underlines come from the browser spellchecker (right‑click a word for
+                              suggestions). Enable English (US/UK) in your OS/browser if needed.
+                            </div>
+                            <div style={{ marginTop: "0.35rem" }}>
+                              Or flag a word: double‑click it → <strong>Use selection</strong> → type the
+                              fix → <strong>Replace</strong> / <strong>Replace all</strong>.
+                            </div>
+                          </HelpIcon>
+                        </div>
                       </div>
                       <div className="row" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
                         <label style={{ minWidth: 140, flex: 1 }}>
@@ -2492,43 +2568,52 @@ export default function ResearchWorkspacePage() {
                           <span className="badge">{findMatchCount} match(es) in this section</span>
                         )}
                       </div>
-                      <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
-                        Tip: double‑click a red‑underlined word → Use selection → type the fix → Replace
-                        (or Replace all). Browser dictionary needs English (US/UK) enabled in your OS/browser.
-                      </p>
                     </div>
                   )}
-                  <textarea
-                    ref={paperEditorRef}
-                    style={{ minHeight: 560 }}
-                    lang="en"
-                    spellCheck
-                    autoCorrect="on"
-                    autoCapitalize="sentences"
-                    value={activeSection?.content_md || ""}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSaveState("dirty");
-                      setSections((prev) =>
-                        prev.map((s) => (s.id === sectionId ? { ...s, content_md: val } : s))
-                      );
-                    }}
-                    onBlur={(e) => {
-                      if (saveState === "dirty" || saveState === "error") {
-                        saveSectionContent(e.target.value, { reason: "blur" }).catch(() => {});
-                      }
-                    }}
-                    readOnly={isReviewer}
-                  />
-                  <p className="footer-note">
-                    Spellcheck: red underlines from the browser; find/replace above for bulk fixes.
-                    Autosaves ~3s after you pause.{" "}
-                    <strong>Download Word</strong> converts markdown → .docx for this section;{" "}
-                    <strong>Download full paper</strong> joins all sections.
-                  </p>
+                  <div className="row" style={{ justifyContent: "flex-end", alignItems: "center", gap: "0.35rem" }}>
+                    <HelpIcon label="Paper editor help">
+                      <div>Autosaves ~3s after you pause typing; also on blur and Save now.</div>
+                      <div style={{ marginTop: "0.35rem" }}>
+                        <strong>Download Word</strong> converts this section markdown → .docx.{" "}
+                        <strong>Download full paper</strong> joins all sections.
+                      </div>
+                      <div style={{ marginTop: "0.35rem" }}>
+                        Spell tools sit under the editor: red underlines + find/replace.
+                      </div>
+                    </HelpIcon>
+                  </div>
                   <div className="panel stack" style={{ padding: "0.65rem" }}>
                     <div className="row" style={{ justifyContent: "space-between" }}>
-                      <strong>Paper releases (Commit / Primary)</strong>
+                      <div className="row" style={{ gap: "0.4rem", alignItems: "center" }}>
+                        <strong>Paper releases (Commit / Primary)</strong>
+                        <HelpIcon label="Paper releases help">
+                          <div>
+                            Working <strong>v{project?.working_version || "0.1.1"}</strong>
+                            {project?.primary_version ? (
+                              <>
+                                {" "}
+                                · Primary <strong>v{project.primary_version}</strong>
+                              </>
+                            ) : (
+                              " · no primary yet"
+                            )}
+                            .
+                          </div>
+                          <div style={{ marginTop: "0.35rem" }}>
+                            Save never bumps version. <strong>Commit</strong> freezes a snapshot then
+                            patches (0.1.1…0.1.19). <strong>Publish primary</strong> freezes official
+                            major.0.0 and starts the next workline (1.1.1).
+                          </div>
+                          <div style={{ marginTop: "0.35rem" }}>
+                            No commits yet? Hit <strong>Commit</strong> in the header when you want an
+                            official working snapshot.
+                          </div>
+                          <div style={{ marginTop: "0.35rem" }}>
+                            Pick two releases (left/right) and open <strong>Diff in new tab</strong> for
+                            red/green changes.
+                          </div>
+                        </HelpIcon>
+                      </div>
                       <div className="row">
                         <button
                           className="btn primary"
@@ -2544,19 +2629,16 @@ export default function ResearchWorkspacePage() {
                         </button>
                       </div>
                     </div>
-                    <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
-                      Working <strong>v{project?.working_version || "0.1.1"}</strong>
+                    <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                      <span className="badge good">Working v{project?.working_version || "0.1.1"}</span>
                       {project?.primary_version ? (
-                        <>
-                          {" "}
-                          · Primary <strong>v{project.primary_version}</strong>
-                        </>
+                        <span className="badge">Primary v{project.primary_version}</span>
                       ) : (
-                        " · no primary yet"
+                        <span className="muted" style={{ fontSize: "0.85rem" }}>
+                          No primary yet
+                        </span>
                       )}
-                      . Save never bumps version. Commit freezes a snapshot then patches (…0.1.19).
-                      Publish primary freezes official major.0.0 and starts the next workline (1.1.1).
-                    </p>
+                    </div>
                     {paperReleases.length >= 2 && (
                       <div className="row" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
                         <label style={{ minWidth: 160, flex: 1 }}>
@@ -2600,9 +2682,13 @@ export default function ResearchWorkspacePage() {
                       </div>
                     )}
                     {!paperReleases.length && (
-                      <p className="muted" style={{ margin: 0 }}>
-                        No commits yet. Hit <strong>Commit</strong> in the header when you want an
-                        official working snapshot.
+                      <p className="muted row" style={{ margin: 0, alignItems: "center", gap: "0.4rem" }}>
+                        <span>No commits yet</span>
+                        <HelpIcon label="How to create a commit">
+                          Hit <strong>Commit</strong> in the header when you want an official working
+                          snapshot. That freezes the full paper and bumps the patch version (for example
+                          0.1.1 → 0.1.2). Save alone does not create a release.
+                        </HelpIcon>
                       </p>
                     )}
                     {paperReleases.map((r) => (

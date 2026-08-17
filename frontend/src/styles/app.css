@@ -439,6 +439,52 @@ h3 {
   background: rgba(79, 140, 255, 0.06);
 }
 
+.help-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.help-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(79, 140, 255, 0.15);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  display: inline-grid;
+  place-items: center;
+}
+
+.help-icon:hover {
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.28);
+}
+
+.help-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  min-width: 220px;
+  max-width: min(360px, 80vw);
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  font-size: 0.82rem;
+  color: var(--text);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
 /* Encourage browser spell underlines in dark theme textareas */
 textarea[spellcheck="true"],
 textarea[spellcheck] {
