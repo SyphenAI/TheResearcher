@@ -434,6 +434,17 @@ h3 {
   cursor: pointer;
 }
 
+.spell-tools {
+  border-color: rgba(79, 140, 255, 0.35);
+  background: rgba(79, 140, 255, 0.06);
+}
+
+/* Encourage browser spell underlines in dark theme textareas */
+textarea[spellcheck="true"],
+textarea[spellcheck] {
+  spellcheck: true;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

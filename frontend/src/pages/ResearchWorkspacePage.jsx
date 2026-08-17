@@ -27,6 +27,13 @@ export default function ResearchWorkspacePage() {
   const [taskTitle, setTaskTitle] = useState("");
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskTitle, setEditingTaskTitle] = useState("");
+  /** Paper find / replace (manual flag + fix for misspellings). */
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [findWholeWord, setFindWholeWord] = useState(true);
+  const [findMatchCount, setFindMatchCount] = useState(null);
+  const paperEditorRef = useRef(null);
   const [busy, setBusy] = useState(false);
   /** What long-running desk action is in flight (shown in sticky banner). */
   const [busyLabel, setBusyLabel] = useState("");
@@ -630,6 +637,153 @@ export default function ResearchWorkspacePage() {
       .replace(/[^\w\-]+/g, "_")
       .replace(/_+/g, "_")
       .slice(0, 48) || "research";
+  }
+
+  function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function paperFindRegex() {
+    const raw = findText;
+    if (!raw) return null;
+    const flags = findCaseSensitive ? "g" : "gi";
+    const body = findWholeWord ? `\\b${escapeRegExp(raw)}\\b` : escapeRegExp(raw);
+    try {
+      return new RegExp(body, flags);
+    } catch {
+      return null;
+    }
+  }
+
+  function countPaperMatches() {
+    const text = activeSection?.content_md || "";
+    const re = paperFindRegex();
+    if (!re || !text) {
+      setFindMatchCount(0);
+      return 0;
+    }
+    const n = (text.match(re) || []).length;
+    setFindMatchCount(n);
+    return n;
+  }
+
+  function findNextInPaper() {
+    const el = paperEditorRef.current;
+    const text = activeSection?.content_md || "";
+    const needle = findText;
+    if (!el || !needle) {
+      setError("Enter a word or phrase to find.");
+      return;
+    }
+    const from = el.selectionEnd || 0;
+    const hay = findCaseSensitive ? text : text.toLowerCase();
+    const needleCmp = findCaseSensitive ? needle : needle.toLowerCase();
+    let idx = hay.indexOf(needleCmp, from);
+    if (idx < 0 && from > 0) idx = hay.indexOf(needleCmp, 0);
+    if (idx < 0) {
+      setMessage("No match for that word/phrase in this section.");
+      countPaperMatches();
+      return;
+    }
+    el.focus();
+    el.setSelectionRange(idx, idx + needle.length);
+    // Scroll the match into view roughly
+    const before = text.slice(0, idx);
+    const line = before.split("\n").length;
+    const lineHeight = 18;
+    el.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    countPaperMatches();
+    setError("");
+    setMessage(`Found at character ${idx + 1}.`);
+  }
+
+  function replaceSelectionOrNext() {
+    if (isReviewer || !activeSection) return;
+    const el = paperEditorRef.current;
+    const text = activeSection.content_md || "";
+    const needle = findText;
+    if (!needle) {
+      setError("Enter the word to replace (Find).");
+      return;
+    }
+    let start = el ? el.selectionStart : 0;
+    let end = el ? el.selectionEnd : 0;
+    let selected = text.slice(start, end);
+    const matchSelected =
+      selected &&
+      (findCaseSensitive
+        ? selected === needle
+        : selected.toLowerCase() === needle.toLowerCase());
+
+    if (!matchSelected) {
+      // Jump to next match then replace that range
+      const hay = findCaseSensitive ? text : text.toLowerCase();
+      const needleCmp = findCaseSensitive ? needle : needle.toLowerCase();
+      let idx = hay.indexOf(needleCmp, end);
+      if (idx < 0) idx = hay.indexOf(needleCmp, 0);
+      if (idx < 0) {
+        setMessage("No match to replace.");
+        countPaperMatches();
+        return;
+      }
+      start = idx;
+      end = idx + needle.length;
+    }
+
+    const next = text.slice(0, start) + replaceText + text.slice(end);
+    setSaveState("dirty");
+    setSections((prev) =>
+      prev.map((s) => (s.id === sectionId ? { ...s, content_md: next } : s))
+    );
+    setError("");
+    setMessage(`Replaced one occurrence with “${replaceText || "(empty)"}”.`);
+    requestAnimationFrame(() => {
+      if (el) {
+        el.focus();
+        const caret = start + replaceText.length;
+        el.setSelectionRange(caret, caret);
+      }
+      countPaperMatches();
+    });
+  }
+
+  function replaceAllInPaper() {
+    if (isReviewer || !activeSection) return;
+    const text = activeSection.content_md || "";
+    const re = paperFindRegex();
+    if (!re || !findText) {
+      setError("Enter the word to replace (Find).");
+      return;
+    }
+    const matches = text.match(re) || [];
+    if (!matches.length) {
+      setMessage("No matches to replace.");
+      setFindMatchCount(0);
+      return;
+    }
+    const next = text.replace(re, replaceText);
+    setSaveState("dirty");
+    setSections((prev) =>
+      prev.map((s) => (s.id === sectionId ? { ...s, content_md: next } : s))
+    );
+    setFindMatchCount(0);
+    setError("");
+    setMessage(`Replaced ${matches.length} occurrence(s).`);
+  }
+
+  function useSelectionAsFind() {
+    const el = paperEditorRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    if (start === end) {
+      setError("Select a word in the paper first, then click Use selection.");
+      return;
+    }
+    const sel = (activeSection?.content_md || "").slice(start, end);
+    setFindText(sel);
+    setError("");
+    setMessage(`Find set to “${sel}”. Type a replacement and Replace.`);
   }
 
   /**
@@ -1293,6 +1447,8 @@ export default function ResearchWorkspacePage() {
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       placeholder="What should the multi-agent panel explore here?"
+                      lang="en"
+                      spellCheck
                     />
                   </label>
                   <div className="row">
@@ -1372,7 +1528,12 @@ export default function ResearchWorkspacePage() {
                       </button>
                     </div>
                   </div>
-                  <textarea value={assistantOut} onChange={(e) => setAssistantOut(e.target.value)} />
+                  <textarea
+                    value={assistantOut}
+                    onChange={(e) => setAssistantOut(e.target.value)}
+                    lang="en"
+                    spellCheck
+                  />
                   <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
                     Not in the paper until you Apply. Dismiss only clears this box.
                   </p>
@@ -2055,8 +2216,108 @@ export default function ResearchWorkspacePage() {
               </div>
               {rightTab === "paper" ? (
                 <>
+                  {!isReviewer && (
+                    <div className="panel stack spell-tools" style={{ padding: "0.65rem" }}>
+                      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                        <strong>Spell help · find &amp; replace</strong>
+                        <span className="muted" style={{ fontSize: "0.8rem" }}>
+                          Red underlines = browser spellcheck (right‑click for suggestions)
+                        </span>
+                      </div>
+                      <div className="row" style={{ flexWrap: "wrap", alignItems: "flex-end" }}>
+                        <label style={{ minWidth: 140, flex: 1 }}>
+                          Find (flag a word)
+                          <input
+                            value={findText}
+                            onChange={(e) => {
+                              setFindText(e.target.value);
+                              setFindMatchCount(null);
+                            }}
+                            placeholder="misspelled word"
+                            disabled={busy}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                findNextInPaper();
+                              }
+                            }}
+                          />
+                        </label>
+                        <label style={{ minWidth: 140, flex: 1 }}>
+                          Replace with
+                          <input
+                            value={replaceText}
+                            onChange={(e) => setReplaceText(e.target.value)}
+                            placeholder="correct spelling"
+                            disabled={busy}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                replaceSelectionOrNext();
+                              }
+                            }}
+                          />
+                        </label>
+                        <button className="btn ghost" type="button" disabled={busy} onClick={useSelectionAsFind}>
+                          Use selection
+                        </button>
+                        <button className="btn" type="button" disabled={busy || !findText} onClick={findNextInPaper}>
+                          Find next
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={busy || !findText}
+                          onClick={replaceSelectionOrNext}
+                        >
+                          Replace
+                        </button>
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={busy || !findText}
+                          onClick={replaceAllInPaper}
+                        >
+                          Replace all
+                        </button>
+                        <button className="btn ghost" type="button" disabled={busy || !findText} onClick={countPaperMatches}>
+                          Count
+                        </button>
+                      </div>
+                      <div className="row" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
+                        <label className="row" style={{ gap: "0.35rem", alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={findWholeWord}
+                            onChange={(e) => setFindWholeWord(e.target.checked)}
+                          />
+                          Whole word
+                        </label>
+                        <label className="row" style={{ gap: "0.35rem", alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={findCaseSensitive}
+                            onChange={(e) => setFindCaseSensitive(e.target.checked)}
+                          />
+                          Match case
+                        </label>
+                        {findMatchCount != null && (
+                          <span className="badge">{findMatchCount} match(es) in this section</span>
+                        )}
+                      </div>
+                      <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+                        Tip: double‑click a red‑underlined word → Use selection → type the fix → Replace
+                        (or Replace all). Browser dictionary needs English (US/UK) enabled in your OS/browser.
+                      </p>
+                    </div>
+                  )}
                   <textarea
+                    ref={paperEditorRef}
                     style={{ minHeight: 560 }}
+                    lang="en"
+                    spellCheck
+                    autoCorrect="on"
+                    autoCapitalize="sentences"
                     value={activeSection?.content_md || ""}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -2073,8 +2334,8 @@ export default function ResearchWorkspacePage() {
                     readOnly={isReviewer}
                   />
                   <p className="footer-note">
-                    Autosaves ~3s after you pause typing; also saves on blur and Save now. Humanize
-                    requires Accept (then Undo humanize once if needed).{" "}
+                    Spellcheck: red underlines from the browser; find/replace above for bulk fixes.
+                    Autosaves ~3s after you pause.{" "}
                     <strong>Download Word</strong> converts markdown → .docx for this section;{" "}
                     <strong>Download full paper</strong> joins all sections.
                   </p>
