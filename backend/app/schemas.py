@@ -74,6 +74,13 @@ class ProjectOut(BaseModel):
     archived: bool = False
     storage_path: str = ""
     archived_at: datetime | None = None
+    # Semantic paper versions (save = no bump; Commit = patch++; Publish primary = major++)
+    working_version: str = "0.1.1"
+    primary_version: str | None = None
+    version_major: int = 0
+    version_minor: int = 1
+    version_patch: int = 1
+    has_primary: bool = False
     created_at: datetime
     updated_at: datetime
     section_count: int = 0
@@ -84,6 +91,10 @@ class ProjectOut(BaseModel):
     progress_pct: float = 0.0
 
     model_config = {"from_attributes": True}
+
+
+class PaperReleaseNote(BaseModel):
+    note: str = ""
 
 
 class SectionCreate(BaseModel):

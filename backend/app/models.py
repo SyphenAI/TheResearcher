@@ -57,6 +57,15 @@ class Project(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     storage_path: Mapped[str] = mapped_column(String(512), default="")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Working paper line: save does not bump; Commit bumps patch; Publish primary bumps major.
+    # Start at 0.1.1 → commits 0.1.2… → publish primary 1.0.0 → working becomes 1.1.1
+    version_major: Mapped[int] = mapped_column(Integer, default=0)
+    version_minor: Mapped[int] = mapped_column(Integer, default=1)
+    version_patch: Mapped[int] = mapped_column(Integer, default=1)
+    primary_major: Mapped[int] = mapped_column(Integer, default=0)
+    primary_minor: Mapped[int] = mapped_column(Integer, default=0)
+    primary_patch: Mapped[int] = mapped_column(Integer, default=0)
+    has_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -116,6 +125,26 @@ class SectionVersion(Base):
     content_md: Mapped[str] = mapped_column(Text, default="")
     label: Mapped[str] = mapped_column(String(128), default="snapshot")
     char_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class PaperRelease(Base):
+    """Official paper commits / primary publishes (full multi-section snapshot)."""
+
+    __tablename__ = "paper_releases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    # Semantic label at time of commit/publish, e.g. 0.1.5 or 1.0.0
+    version_label: Mapped[str] = mapped_column(String(32), default="0.1.1")
+    # commit = working snapshot; primary = published primary version
+    kind: Mapped[str] = mapped_column(String(16), default="commit")
+    note: Mapped[str] = mapped_column(Text, default="")
+    # JSON list of {section_id, title, sort_order, content_md, prompt}
+    snapshot_json: Mapped[str] = mapped_column(Text, default="[]")
+    char_count: Mapped[int] = mapped_column(Integer, default=0)
+    section_count: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 

@@ -11,6 +11,7 @@ from app.deps import get_current_user
 from app.models import Artifact, Project, ResearchSection, ResearchTask, User
 from app.schemas import (
     ArtifactOut,
+    PaperReleaseNote,
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
@@ -73,6 +74,8 @@ def _serialize_project(db: Session, project: Project) -> ProjectOut:
         task_part = 100.0 * tasks_done / max(task_count, 1)
         progress = (0.65 * section_part) + (0.35 * task_part)
 
+    from app.services.paper_versions import primary_version, working_version
+
     return ProjectOut(
         id=project.id,
         title=project.title,
@@ -88,6 +91,12 @@ def _serialize_project(db: Session, project: Project) -> ProjectOut:
         archived=bool(getattr(project, "archived", False)),
         storage_path=getattr(project, "storage_path", "") or "",
         archived_at=getattr(project, "archived_at", None),
+        working_version=working_version(project),
+        primary_version=primary_version(project),
+        version_major=int(getattr(project, "version_major", 0) or 0),
+        version_minor=int(getattr(project, "version_minor", 1) or 1),
+        version_patch=int(getattr(project, "version_patch", 1) or 1),
+        has_primary=bool(getattr(project, "has_primary", False)),
         created_at=project.created_at,
         updated_at=project.updated_at,
         section_count=section_count,
@@ -283,6 +292,90 @@ def get_project(
     _: User = Depends(get_current_user),
 ) -> ProjectOut:
     return _serialize_project(db, _get_project(db, project_id))
+
+
+@router.get("/{project_id}/paper-releases")
+def list_paper_releases(
+    project_id: int,
+    limit: int = 40,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Official Commit / primary Publish snapshots (full paper)."""
+    from app.services.paper_versions import list_releases, release_to_dict, version_meta
+
+    project = _get_project(db, project_id)
+    rows = list_releases(db, project_id, limit=limit)
+    return {
+        "project_id": project_id,
+        **version_meta(project),
+        "releases": [release_to_dict(r) for r in rows],
+    }
+
+
+@router.post("/{project_id}/paper/commit")
+def commit_paper_version(
+    project_id: int,
+    body: PaperReleaseNote | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Snapshot full paper at current working version, then bump patch (0.1.1 → 0.1.2)."""
+    from app.services.paper_versions import commit_paper, version_meta
+
+    project = _get_project(db, project_id)
+    note = (body.note if body else "") or ""
+    try:
+        result = commit_paper(db, project, note=note, created_by=user.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(project)
+    return {**result, "project": _serialize_project(db, project), **version_meta(project)}
+
+
+@router.post("/{project_id}/paper/publish-primary")
+def publish_primary_paper_version(
+    project_id: int,
+    body: PaperReleaseNote | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Publish primary major.0.0 from current paper; set working line to major.1.1."""
+    from app.services.paper_versions import publish_primary, version_meta
+
+    project = _get_project(db, project_id)
+    note = (body.note if body else "") or ""
+    try:
+        result = publish_primary(db, project, note=note, created_by=user.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(project)
+    return {**result, "project": _serialize_project(db, project), **version_meta(project)}
+
+
+@router.post("/{project_id}/paper-releases/{release_id}/restore")
+def restore_paper_release(
+    project_id: int,
+    release_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Restore section bodies from a commit/primary snapshot (version numbers unchanged)."""
+    from app.services.paper_versions import get_release, restore_release, version_meta
+
+    project = _get_project(db, project_id)
+    release = get_release(db, project_id, release_id)
+    if not release:
+        raise HTTPException(status_code=404, detail="Release not found")
+    try:
+        result = restore_release(db, project, release, created_by=user.username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(project)
+    return {**result, "project": _serialize_project(db, project), **version_meta(project)}
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)

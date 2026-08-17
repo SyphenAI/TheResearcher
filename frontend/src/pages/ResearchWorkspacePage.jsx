@@ -62,6 +62,8 @@ export default function ResearchWorkspacePage() {
   const [saveState, setSaveState] = useState("saved"); // saved | saving | dirty | error
   const [saveToast, setSaveToast] = useState("");
   const [sectionVersions, setSectionVersions] = useState([]);
+  const [paperReleases, setPaperReleases] = useState([]);
+  const [commitNote, setCommitNote] = useState("");
   const [checklistMd, setChecklistMd] = useState("");
   const [scholarQ, setScholarQ] = useState("");
   const [scholarHits, setScholarHits] = useState([]);
@@ -215,10 +217,129 @@ export default function ResearchWorkspacePage() {
     }
   }
 
+  async function loadPaperReleases() {
+    if (!project?.id) {
+      setPaperReleases([]);
+      return;
+    }
+    try {
+      const res = await api(`/api/projects/${project.id}/paper-releases?limit=40`);
+      setPaperReleases(res.releases || []);
+      if (res.working_version || res.primary_version !== undefined) {
+        setProject((p) =>
+          p
+            ? {
+                ...p,
+                working_version: res.working_version || p.working_version,
+                primary_version: res.primary_version,
+                has_primary: !!res.has_primary,
+              }
+            : p
+        );
+      }
+    } catch {
+      setPaperReleases([]);
+    }
+  }
+
   useEffect(() => {
     loadSectionVersions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, sectionId]);
+
+  useEffect(() => {
+    loadPaperReleases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  async function commitPaper() {
+    if (!project || isReviewer) return;
+    beginBusy("Committing paper snapshot");
+    setError("");
+    try {
+      // Flush current section first so commit includes latest editor text
+      if (activeSection && (saveState === "dirty" || saveState === "error")) {
+        await saveSectionContent(activeSection.content_md || "", { reason: "pre-commit" });
+      }
+      const res = await api(`/api/projects/${project.id}/paper/commit`, {
+        method: "POST",
+        body: JSON.stringify({ note: commitNote || "" }),
+      });
+      if (res.project) setProject(res.project);
+      setCommitNote("");
+      setMessage(res.message || `Committed. Working now v${res.working_version}`);
+      await loadPaperReleases();
+      await loadProject();
+    } catch (e) {
+      setError(e.message || "Commit failed.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function publishPrimaryPaper() {
+    if (!project || isReviewer) return;
+    const nextPrimary = project.has_primary
+      ? `${(project.version_major || 0) + 1}.0.0`
+      : "1.0.0";
+    if (
+      !window.confirm(
+        `Publish primary ${nextPrimary} from the current paper?\n\n` +
+          `This freezes a full snapshot as the official primary. ` +
+          `Working version will move to the next workline (e.g. 1.1.1 after 1.0.0).`
+      )
+    ) {
+      return;
+    }
+    beginBusy("Publishing primary version");
+    setError("");
+    try {
+      if (activeSection && (saveState === "dirty" || saveState === "error")) {
+        await saveSectionContent(activeSection.content_md || "", { reason: "pre-publish" });
+      }
+      const res = await api(`/api/projects/${project.id}/paper/publish-primary`, {
+        method: "POST",
+        body: JSON.stringify({ note: commitNote || "Primary published" }),
+      });
+      if (res.project) setProject(res.project);
+      setCommitNote("");
+      setMessage(res.message || `Primary published. Working v${res.working_version}`);
+      await loadPaperReleases();
+      await loadProject();
+    } catch (e) {
+      setError(e.message || "Publish primary failed.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function restorePaperRelease(releaseId, label) {
+    if (!project || isReviewer) return;
+    if (
+      !window.confirm(
+        `Restore paper from snapshot v${label || releaseId}?\n` +
+          `Current bodies are auto-snapshotted first. Working version number stays the same.`
+      )
+    ) {
+      return;
+    }
+    beginBusy("Restoring paper release");
+    setError("");
+    try {
+      const res = await api(`/api/projects/${project.id}/paper-releases/${releaseId}/restore`, {
+        method: "POST",
+      });
+      if (res.project) setProject(res.project);
+      setMessage(res.message || "Restored.");
+      await loadProjectDetails();
+      await loadPaperReleases();
+      await loadSectionVersions();
+    } catch (e) {
+      setError(e.message || "Restore failed.");
+    } finally {
+      endBusy();
+    }
+  }
 
   // Debounced autosave when dirty (3s after last keystroke)
   useEffect(() => {
@@ -1224,12 +1345,58 @@ export default function ResearchWorkspacePage() {
             ← Back to dashboard
           </button>
           <h1 style={{ margin: "0.5rem 0 0" }}>{project?.title || "Research desk"}</h1>
+          <div className="row" style={{ marginTop: "0.35rem", flexWrap: "wrap", gap: "0.4rem", alignItems: "center" }}>
+            <span className="badge good" title="Working line — Save does not bump this">
+              Working v{project?.working_version || "0.1.1"}
+            </span>
+            {project?.primary_version ? (
+              <span className="badge" title="Last official primary publish">
+                Primary v{project.primary_version}
+              </span>
+            ) : (
+              <span className="badge" title="No primary publish yet">
+                Primary — none yet
+              </span>
+            )}
+            <span className="muted" style={{ fontSize: "0.8rem" }}>
+              Save = keep draft · Commit = snapshot + bump patch · Publish primary = freeze major.0.0
+            </span>
+          </div>
           <p className="muted" style={{ margin: "0.25rem 0 0" }}>
             Panel research desk for OffSec · Exposure · VM.
           </p>
         </div>
-        <div className="row">
+        <div className="row" style={{ flexWrap: "wrap" }}>
           <span className="badge">{providers.length} live providers</span>
+          {!isReviewer && (
+            <>
+              <input
+                style={{ minWidth: 140, maxWidth: 200 }}
+                placeholder="Commit note (optional)"
+                value={commitNote}
+                onChange={(e) => setCommitNote(e.target.value)}
+                disabled={busy}
+              />
+              <button
+                className="btn"
+                type="button"
+                disabled={busy}
+                onClick={commitPaper}
+                title="Snapshot full paper at current version, then bump patch (0.1.1 → 0.1.2)"
+              >
+                Commit
+              </button>
+              <button
+                className="btn primary"
+                type="button"
+                disabled={busy}
+                onClick={publishPrimaryPaper}
+                title="Publish primary major.0.0 from current paper; work continues on major.1.1"
+              >
+                Publish primary
+              </button>
+            </>
+          )}
           <button
             className="btn"
             type="button"
@@ -2339,10 +2506,78 @@ export default function ResearchWorkspacePage() {
                     <strong>Download Word</strong> converts markdown → .docx for this section;{" "}
                     <strong>Download full paper</strong> joins all sections.
                   </p>
+                  <div className="panel stack" style={{ padding: "0.65rem" }}>
+                    <div className="row" style={{ justifyContent: "space-between" }}>
+                      <strong>Paper releases (Commit / Primary)</strong>
+                      <button className="btn ghost" type="button" onClick={loadPaperReleases} disabled={busy}>
+                        Refresh
+                      </button>
+                    </div>
+                    <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+                      Working <strong>v{project?.working_version || "0.1.1"}</strong>
+                      {project?.primary_version ? (
+                        <>
+                          {" "}
+                          · Primary <strong>v{project.primary_version}</strong>
+                        </>
+                      ) : (
+                        " · no primary yet"
+                      )}
+                      . Save never bumps version. Commit freezes a snapshot then patches (…0.1.19).
+                      Publish primary freezes official major.0.0 and starts the next workline (1.1.1).
+                    </p>
+                    {!paperReleases.length && (
+                      <p className="muted" style={{ margin: 0 }}>
+                        No commits yet. Hit <strong>Commit</strong> in the header when you want an
+                        official working snapshot.
+                      </p>
+                    )}
+                    {paperReleases.map((r) => (
+                      <div
+                        key={r.id}
+                        className="row"
+                        style={{
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          gap: "0.5rem",
+                          borderBottom: "1px solid var(--border)",
+                          paddingBottom: "0.35rem",
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                            <span className={`badge ${r.kind === "primary" ? "good" : ""}`}>
+                              v{r.version_label}
+                            </span>
+                            <span className="badge">{r.kind}</span>
+                            <span className="muted" style={{ fontSize: "0.78rem" }}>
+                              {r.section_count} sections · {r.char_count} chars
+                              {r.created_at ? ` · ${new Date(r.created_at).toLocaleString()}` : ""}
+                            </span>
+                          </div>
+                          {r.note && (
+                            <div className="muted" style={{ fontSize: "0.82rem", marginTop: "0.2rem" }}>
+                              {r.note}
+                            </div>
+                          )}
+                        </div>
+                        {!isReviewer && (
+                          <button
+                            className="btn ghost"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => restorePaperRelease(r.id, r.version_label)}
+                          >
+                            Restore
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                   {!isReviewer && (
                     <div className="panel stack" style={{ padding: "0.65rem" }}>
                       <div className="row" style={{ justifyContent: "space-between" }}>
-                        <strong>Version snippets</strong>
+                        <strong>Section autosave snippets</strong>
                         <button
                           className="btn ghost"
                           type="button"
@@ -2353,7 +2588,7 @@ export default function ResearchWorkspacePage() {
                         </button>
                       </div>
                       <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
-                        Light history of prior bodies (before save / restore). Not full VCS.
+                        Light per-section history (before save / restore). Does not change version numbers.
                       </p>
                       {!sectionVersions.length && (
                         <p className="muted" style={{ margin: 0 }}>

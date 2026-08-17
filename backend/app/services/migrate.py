@@ -28,6 +28,20 @@ def ensure_schema(engine: Engine) -> None:
             alters.append("ALTER TABLE projects ADD COLUMN storage_path VARCHAR(512) DEFAULT ''")
         if "archived_at" not in cols:
             alters.append("ALTER TABLE projects ADD COLUMN archived_at DATETIME")
+        if "version_major" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN version_major INTEGER DEFAULT 0")
+        if "version_minor" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN version_minor INTEGER DEFAULT 1")
+        if "version_patch" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN version_patch INTEGER DEFAULT 1")
+        if "primary_major" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN primary_major INTEGER DEFAULT 0")
+        if "primary_minor" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN primary_minor INTEGER DEFAULT 0")
+        if "primary_patch" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN primary_patch INTEGER DEFAULT 0")
+        if "has_primary" not in cols:
+            alters.append("ALTER TABLE projects ADD COLUMN has_primary BOOLEAN DEFAULT 0")
         with engine.begin() as conn:
             for stmt in alters:
                 conn.execute(text(stmt))
