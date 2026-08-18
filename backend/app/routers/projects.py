@@ -506,12 +506,55 @@ def create_section(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> ResearchSection:
+    """Add a section after the template list (desk left panel)."""
     _get_project(db, project_id)
-    section = ResearchSection(project_id=project_id, **body.model_dump())
+    data = body.model_dump()
+    title = (data.get("title") or "").strip() or "New section"
+    data["title"] = title[:255]
+    # Append after existing sections when sort_order not explicitly set (>0) / default 0.
+    if not data.get("sort_order"):
+        max_order = (
+            db.query(ResearchSection.sort_order)
+            .filter(ResearchSection.project_id == project_id)
+            .order_by(ResearchSection.sort_order.desc())
+            .first()
+        )
+        data["sort_order"] = (max_order[0] if max_order else -1) + 1
+    if not (data.get("content_md") or "").strip():
+        data["content_md"] = f"# {title}\n\n"
+    section = ResearchSection(project_id=project_id, **data)
     db.add(section)
     db.commit()
     db.refresh(section)
     return section
+
+
+@router.delete("/{project_id}/sections/{section_id}", status_code=204)
+def delete_section(
+    project_id: int,
+    section_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> Response:
+    """Remove a section from the project (paper body for that section is deleted)."""
+    _get_project(db, project_id)
+    section = (
+        db.query(ResearchSection)
+        .filter(ResearchSection.id == section_id, ResearchSection.project_id == project_id)
+        .first()
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    remaining = (
+        db.query(ResearchSection)
+        .filter(ResearchSection.project_id == project_id, ResearchSection.id != section_id)
+        .count()
+    )
+    if remaining < 1:
+        raise HTTPException(status_code=400, detail="Keep at least one section in the paper.")
+    db.delete(section)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.patch("/{project_id}/sections/{section_id}", response_model=SectionOut)

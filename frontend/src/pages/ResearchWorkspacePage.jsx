@@ -96,6 +96,7 @@ export default function ResearchWorkspacePage() {
   const [commitNote, setCommitNote] = useState("");
   const [diffLeftId, setDiffLeftId] = useState("");
   const [diffRightId, setDiffRightId] = useState("");
+  const [newSectionTitle, setNewSectionTitle] = useState("");
   const [checklistMd, setChecklistMd] = useState("");
   const [scholarQ, setScholarQ] = useState("");
   const [scholarHits, setScholarHits] = useState([]);
@@ -1025,6 +1026,79 @@ export default function ResearchWorkspacePage() {
     return s === "done" || s === "completed";
   }
 
+  async function addSection() {
+    if (!project || isReviewer) return;
+    const title = (newSectionTitle || "").trim() || "New section";
+    beginBusy("Adding section");
+    setError("");
+    try {
+      const created = await api(`/api/projects/${project.id}/sections`, {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          prompt: "",
+          content_md: `# ${title}\n\n`,
+        }),
+      });
+      setNewSectionTitle("");
+      await loadProjectDetails();
+      await loadProject();
+      if (created?.id) setSectionId(created.id);
+      setMessage(`Added section “${title}”. Template sections stay; this one is extra.`);
+      setRightTab("paper");
+    } catch (e) {
+      setError(e.message || "Could not add section.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function deleteSection(section) {
+    if (!project || !section || isReviewer) return;
+    if (sections.length <= 1) {
+      setError("Keep at least one section in the paper.");
+      return;
+    }
+    if (!window.confirm(`Delete section “${section.title}”? Its paper text will be removed.`)) {
+      return;
+    }
+    beginBusy("Deleting section");
+    setError("");
+    try {
+      await api(`/api/projects/${project.id}/sections/${section.id}`, { method: "DELETE" });
+      if (sectionId === section.id) setSectionId(null);
+      await loadProjectDetails();
+      await loadProject();
+      setMessage(`Deleted section “${section.title}”.`);
+    } catch (e) {
+      setError(e.message || "Could not delete section.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function renameSection(section) {
+    if (!project || !section || isReviewer) return;
+    const next = window.prompt("Section title", section.title || "");
+    if (next == null) return;
+    const title = next.trim();
+    if (!title || title === section.title) return;
+    beginBusy("Renaming section");
+    setError("");
+    try {
+      const updated = await api(`/api/projects/${project.id}/sections/${section.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+      setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setMessage(`Renamed section to “${title}”.`);
+    } catch (e) {
+      setError(e.message || "Could not rename section.");
+    } finally {
+      endBusy();
+    }
+  }
+
   async function addTask() {
     if (!taskTitle.trim() || !activeId || isReviewer) return;
     beginBusy("Adding task");
@@ -1655,24 +1729,101 @@ export default function ResearchWorkspacePage() {
 
           <div className="grid-2">
             <div className="panel stack">
-              <h2>Sections (panel structure)</h2>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <h2 style={{ margin: 0 }}>Sections (panel structure)</h2>
+                <HelpIcon label="Sections help">
+                  Templates give you a starting outline. Add more sections anytime for extra analysis,
+                  appendices, or topic-specific chapters. Rename or delete from each row.
+                </HelpIcon>
+              </div>
               <div className="section-list" style={{ maxHeight: 360 }}>
                 {sections.map((s) => (
-                  <button
+                  <div
                     key={s.id}
                     className={`section-item ${s.id === sectionId ? "active" : ""}`}
-                    onClick={() => setSectionId(s.id)}
+                    style={{ display: "flex", gap: "0.35rem", alignItems: "stretch" }}
                   >
-                    <div>{s.title}</div>
-                    <div className="muted" style={{ fontSize: "0.8rem" }}>
-                      agent {s.agent_chars} · human {s.human_chars}
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      className="section-item-main"
+                      style={{
+                        flex: 1,
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "none",
+                        color: "inherit",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                      onClick={() => setSectionId(s.id)}
+                    >
+                      <div>{s.title}</div>
+                      <div className="muted" style={{ fontSize: "0.8rem" }}>
+                        agent {s.agent_chars} · human {s.human_chars}
+                      </div>
+                    </button>
+                    {!isReviewer && (
+                      <div className="stack" style={{ gap: "0.2rem", justifyContent: "center" }}>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          style={{ padding: "0.15rem 0.4rem", fontSize: "0.75rem" }}
+                          disabled={busy}
+                          title="Rename section"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            renameSection(s);
+                          }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          style={{ padding: "0.15rem 0.4rem", fontSize: "0.75rem" }}
+                          disabled={busy || sections.length <= 1}
+                          title="Delete section"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteSection(s);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
 
               {!isReviewer && (
                 <>
+                  <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+                    <label style={{ flex: 1, minWidth: 160 }}>
+                      Add section
+                      <input
+                        value={newSectionTitle}
+                        onChange={(e) => setNewSectionTitle(e.target.value)}
+                        placeholder="e.g. Appendix · Buyer implications"
+                        disabled={busy}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addSection();
+                          }
+                        }}
+                      />
+                    </label>
+                    <button
+                      className="btn primary"
+                      type="button"
+                      disabled={busy}
+                      onClick={addSection}
+                      title="Append a new section after the template outline"
+                    >
+                      Add section
+                    </button>
+                  </div>
                   <label>
                     Research prompt for this section
                     <textarea
