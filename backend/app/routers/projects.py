@@ -557,6 +557,53 @@ def delete_section(
     return Response(status_code=204)
 
 
+@router.post("/{project_id}/sections/{section_id}/move", response_model=list[SectionOut])
+def move_section(
+    project_id: int,
+    section_id: int,
+    direction: str = "up",
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[ResearchSection]:
+    """Reorder section tiles: direction=up|down (swap with neighbor)."""
+    _get_project(db, project_id)
+    rows = (
+        db.query(ResearchSection)
+        .filter(ResearchSection.project_id == project_id)
+        .order_by(ResearchSection.sort_order.asc(), ResearchSection.id.asc())
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="No sections")
+    # Normalize contiguous sort_order so swaps stay stable
+    for idx, row in enumerate(rows):
+        row.sort_order = idx
+    db.flush()
+
+    ids = [r.id for r in rows]
+    try:
+        i = ids.index(section_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Section not found") from exc
+
+    d = (direction or "up").strip().lower()
+    if d not in {"up", "down"}:
+        raise HTTPException(status_code=400, detail="direction must be up or down")
+    j = i - 1 if d == "up" else i + 1
+    if j < 0 or j >= len(rows):
+        # Already at edge — return current order unchanged
+        return rows
+
+    rows[i].sort_order, rows[j].sort_order = rows[j].sort_order, rows[i].sort_order
+    db.commit()
+    return (
+        db.query(ResearchSection)
+        .filter(ResearchSection.project_id == project_id)
+        .order_by(ResearchSection.sort_order.asc(), ResearchSection.id.asc())
+        .all()
+    )
+
+
 @router.patch("/{project_id}/sections/{section_id}", response_model=SectionOut)
 def update_section(
     project_id: int,

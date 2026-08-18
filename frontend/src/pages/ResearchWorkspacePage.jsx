@@ -1099,6 +1099,33 @@ export default function ResearchWorkspacePage() {
     }
   }
 
+  async function moveSection(section, direction) {
+    if (!project || !section || isReviewer) return;
+    beginBusy(direction === "up" ? "Moving section up" : "Moving section down");
+    setError("");
+    try {
+      const ordered = await api(
+        `/api/projects/${project.id}/sections/${section.id}/move?direction=${encodeURIComponent(direction)}`,
+        { method: "POST" }
+      );
+      if (Array.isArray(ordered)) {
+        setSections(ordered);
+      } else {
+        await loadProjectDetails();
+      }
+      setMessage(
+        direction === "up"
+          ? `Moved “${section.title}” up.`
+          : `Moved “${section.title}” down.`
+      );
+      await loadProject();
+    } catch (e) {
+      setError(e.message || "Could not reorder section.");
+    } finally {
+      endBusy();
+    }
+  }
+
   async function addTask() {
     if (!taskTitle.trim() || !activeId || isReviewer) return;
     beginBusy("Adding task");
@@ -1732,17 +1759,47 @@ export default function ResearchWorkspacePage() {
               <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
                 <h2 style={{ margin: 0 }}>Sections (panel structure)</h2>
                 <HelpIcon label="Sections help">
-                  Templates give you a starting outline. Add more sections anytime for extra analysis,
-                  appendices, or topic-specific chapters. Rename or delete from each row.
+                  Templates give you a starting outline. Add more sections anytime. Use ↑ / ↓ to reorder
+                  tiles (for example move Quick actions above Conclusion). Rename or delete from each row.
                 </HelpIcon>
               </div>
               <div className="section-list" style={{ maxHeight: 360 }}>
-                {sections.map((s) => (
+                {sections.map((s, idx) => (
                   <div
                     key={s.id}
                     className={`section-item ${s.id === sectionId ? "active" : ""}`}
                     style={{ display: "flex", gap: "0.35rem", alignItems: "stretch" }}
                   >
+                    {!isReviewer && (
+                      <div className="stack" style={{ gap: "0.15rem", justifyContent: "center" }}>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          style={{ padding: "0.1rem 0.35rem", fontSize: "0.75rem", minWidth: "1.6rem" }}
+                          disabled={busy || idx === 0}
+                          title="Move section up"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveSection(s, "up");
+                          }}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          style={{ padding: "0.1rem 0.35rem", fontSize: "0.75rem", minWidth: "1.6rem" }}
+                          disabled={busy || idx >= sections.length - 1}
+                          title="Move section down"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveSection(s, "down");
+                          }}
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    )}
                     <button
                       type="button"
                       className="section-item-main"
