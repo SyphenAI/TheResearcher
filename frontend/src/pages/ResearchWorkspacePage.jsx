@@ -2655,33 +2655,39 @@ export default function ResearchWorkspacePage() {
                 summary={controls.length ? `${controls.length} controls` : "Collapsed · control packs"}
                 defaultOpen={false}
               >
-              <form className="stack" onSubmit={addControl}>
-                <div className="row">
-                  <select value={controlPack} onChange={(e) => setControlPack(e.target.value)}>
-                    {(frameworks.saas_packs || []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    placeholder="Control name"
-                    value={controlName}
-                    onChange={(e) => setControlName(e.target.value)}
-                  />
-                  <input placeholder="Vendor" value={vendor} onChange={(e) => setVendor(e.target.value)} />
-                  <button className="btn" type="submit">
-                    Add
-                  </button>
-                </div>
-              </form>
-              <ul className="muted">
-                {controls.map((c) => (
-                  <li key={c.id}>
-                    [{c.status}] {c.control_name} · {c.vendor || "n/a"}
-                  </li>
-                ))}
-              </ul>
+                <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+                  Track vendor / SaaS control status against a pack. Expand only when you need it.
+                </p>
+                <form className="stack" onSubmit={addControl}>
+                  <div className="row" style={{ flexWrap: "wrap" }}>
+                    <select value={controlPack} onChange={(e) => setControlPack(e.target.value)}>
+                      {(frameworks.saas_packs || []).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      placeholder="Control name"
+                      value={controlName}
+                      onChange={(e) => setControlName(e.target.value)}
+                    />
+                    <input placeholder="Vendor" value={vendor} onChange={(e) => setVendor(e.target.value)} />
+                    <button className="btn" type="submit">
+                      Add
+                    </button>
+                  </div>
+                </form>
+                <ul className="muted">
+                  {controls.map((c) => (
+                    <li key={c.id}>
+                      [{c.status}] {c.control_name} · {c.vendor || "n/a"}
+                    </li>
+                  ))}
+                </ul>
+                {!controls.length && (
+                  <p className="muted" style={{ margin: 0 }}>No controls logged yet.</p>
+                )}
               </CollapsibleTile>
 
               <CollapsibleTile
@@ -2710,7 +2716,15 @@ export default function ResearchWorkspacePage() {
 
               {!isReviewer && (
                 <>
-                  <h3>Tasks</h3>
+                  <CollapsibleTile
+                    title="Tasks"
+                    summary={
+                      tasks.length
+                        ? `${tasks.filter((t) => !taskIsDone(t)).length} open · ${tasks.length} total`
+                        : "Collapsed · research checklist"
+                    }
+                    defaultOpen={false}
+                  >
                   <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
                     Check to cross off when done. Edit title inline. Open tasks count toward project progress.
                   </p>
@@ -2819,15 +2833,29 @@ export default function ResearchWorkspacePage() {
                       );
                     })}
                   </div>
-                  <h3>Artifacts</h3>
-                  <input type="file" onChange={uploadArtifact} />
-                  <ul className="muted">
-                    {artifacts.map((a) => (
-                      <li key={a.id}>
-                        {a.original_name} ({a.size_bytes} bytes)
-                      </li>
-                    ))}
-                  </ul>
+                  </CollapsibleTile>
+
+                  <CollapsibleTile
+                    title="Artifacts"
+                    summary={
+                      artifacts.length
+                        ? `${artifacts.length} file(s)`
+                        : "Collapsed · uploads"
+                    }
+                    defaultOpen={false}
+                  >
+                    <input type="file" onChange={uploadArtifact} />
+                    <ul className="muted">
+                      {artifacts.map((a) => (
+                        <li key={a.id}>
+                          {a.original_name} ({a.size_bytes} bytes)
+                        </li>
+                      ))}
+                    </ul>
+                    {!artifacts.length && (
+                      <p className="muted" style={{ margin: 0 }}>No artifacts uploaded yet.</p>
+                    )}
+                  </CollapsibleTile>
                 </>
               )}
             </div>
