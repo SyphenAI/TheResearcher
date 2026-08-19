@@ -106,14 +106,16 @@ def humanize_text(text: str, strength: str = "medium") -> str:
 def score_ai_likelihood(text: str) -> dict[str, Any]:
     """Local AI % heuristic (quick check + publish gate). Not a forensic detector.
 
-    Signals: sentence length, banned phrases, dashes, passive voice, contractions,
-    vocabulary uniqueness, uniform bullet lists. Caps at 99%.
+    Tuned for formal analyst notes: long sentences / sparse contractions are mild.
+    Stock AI phrases, em dashes, and double hyphens are the main red flags.
     """
     if not text.strip():
         return {
             "ai_pct": 0.0,
             "human_pct": 100.0,
             "signals": {"empty": True},
+            "drivers": [],
+            "why": [],
             "recommendations": ["Paste content to evaluate."],
         }
 
@@ -132,6 +134,7 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
     passive_hits = len(re.findall(r"\b(is|are|was|were|be|been|being)\s+\w+ed\b", text, re.I))
     contraction_hits = len(re.findall(r"\b\w+n't\b|\bit's\b|\byou're\b|\bwe're\b|\bthey're\b", text, re.I))
     unique_ratio = len(set(w.lower() for w in words)) / word_count
+    bullets = re.findall(r"^\s*[-*]\s+.+$", text, flags=re.MULTILINE)
 
     drivers: list[dict[str, Any]] = []
     why: list[str] = []
@@ -150,34 +153,22 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
         sign = "+" if points > 0 else ""
         why.append(f"{sign}{points:.0f}: {detail}")
 
-    score = 20.0
-    _drive(20.0, "baseline", "Every draft starts at a 20 baseline before style signals.", direction="up")
+    # Low baseline so typed formal notes are not already "failing"
+    score = 4.0
+    _drive(4.0, "baseline", "Small baseline only — formal human notes should stay low unless AI-ish tells appear.")
 
-    if avg_sentence_len > 32:
-        score += 22
-        _drive(
-            22,
-            "long_sentences",
-            f"Average sentence length is {avg_sentence_len:.1f} words (very long / even cadence).",
-        )
-    elif avg_sentence_len > 24:
-        score += 12
-        _drive(
-            12,
-            "long_sentences",
-            f"Average sentence length is {avg_sentence_len:.1f} words (on the long side).",
-        )
-
-    banned_pts = min(banned_hits * 8, 24)
+    # Primary tells: stock LLM phrases (strong)
+    banned_pts = min(banned_hits * 10, 40)
     score += banned_pts
     if banned_hits:
         _drive(
             banned_pts,
             "stock_phrases",
-            f"Found {banned_hits} stock AI-ish phrase hit(s) (e.g. furthermore, delve, robust).",
+            f"Found {banned_hits} stock AI-ish phrase hit(s) (furthermore, delve, robust, seamless…).",
         )
 
-    dash_pts = min(dash_hits * 4, 12)
+    # Product voice bans — still meaningful
+    dash_pts = min(dash_hits * 5, 20)
     score += dash_pts
     if dash_hits:
         _drive(dash_pts, "dashes", f"Found {dash_hits} em dash / double-hyphen hit(s).")
@@ -187,77 +178,111 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
     if semicolon_hits:
         _drive(semi_pts, "semicolons", f"Found {semicolon_hits} semicolon(s).")
 
-    passive_pts = min(passive_hits * 1.5, 12)
-    score += passive_pts
-    if passive_hits:
-        _drive(passive_pts, "passive_voice", f"Detected about {passive_hits} passive-ish construction(s).")
+    # Formal writing: long sentences / light passive / few contractions are mild only
+    if avg_sentence_len > 38:
+        score += 6
+        _drive(6, "long_sentences", f"Average sentence length is {avg_sentence_len:.1f} words (quite long).")
+    elif avg_sentence_len > 30:
+        score += 3
+        _drive(
+            3,
+            "long_sentences",
+            f"Average sentence length is {avg_sentence_len:.1f} words (normal for formal notes).",
+        )
 
-    if contraction_hits / word_count < 0.01 and word_count > 80:
-        score += 10
+    # Passive only when passive is unusually dense
+    passive_density = passive_hits / max(sentence_count, 1)
+    if passive_density > 0.55 and word_count > 120:
+        passive_pts = min(6.0, 3 + passive_hits * 0.2)
+        score += passive_pts
         _drive(
-            10,
-            "few_contractions",
-            "Very few contractions for this length — reads more formal/AI-smooth.",
+            passive_pts,
+            "passive_voice",
+            f"Passive constructions look dense (~{passive_hits} hits) — fine in moderation for analyst prose.",
         )
-    if unique_ratio < 0.45 and word_count > 100:
-        score += 10
+
+    # Few contractions alone is NOT treated as AI (analyst voice is often formal)
+    if contraction_hits / word_count < 0.005 and word_count > 200 and banned_hits >= 2:
+        score += 4
         _drive(
-            10,
-            "low_vocabulary_variety",
-            f"Word variety is low (unique ratio {unique_ratio:.2f}).",
+            4,
+            "few_contractions_with_stock",
+            "Almost no contractions *plus* stock phrases — that combo reads smoother/AI-like.",
         )
-    if unique_ratio > 0.65:
-        score -= 8
+
+    if unique_ratio < 0.38 and word_count > 150:
+        score += 8
+        _drive(8, "low_vocabulary_variety", f"Word variety is quite low (unique ratio {unique_ratio:.2f}).")
+    elif unique_ratio < 0.45 and word_count > 150 and banned_hits >= 1:
+        score += 4
         _drive(
-            -8,
+            4,
+            "low_vocabulary_with_stock",
+            f"Lower word variety ({unique_ratio:.2f}) with stock phrases present.",
+        )
+
+    if unique_ratio > 0.58:
+        score -= 4
+        _drive(
+            -4,
             "varied_vocabulary",
             f"Word variety looks natural (unique ratio {unique_ratio:.2f}).",
             direction="down",
         )
-    if contraction_hits > 3:
-        score -= 6
+    if contraction_hits >= 2:
+        score -= 3
         _drive(
-            -6,
+            -3,
             "natural_contractions",
-            f"Found {contraction_hits} contractions (don't / it's / you're) — more human voice.",
+            f"Found {contraction_hits} contractions — slight human-voice credit.",
             direction="down",
         )
 
-    # Paragraph symmetry (many equal-ish bullets) often reads synthetic
-    bullets = re.findall(r"^\s*[-*]\s+.+$", text, flags=re.MULTILINE)
-    bullet_sym_pts = 0.0
-    if len(bullets) >= 6:
+    # Template bullet rhythm: mild unless also stock-phrase heavy
+    if len(bullets) >= 8:
         lengths = [len(b) for b in bullets]
         mean = sum(lengths) / len(lengths)
         variance = sum((x - mean) ** 2 for x in lengths) / len(lengths)
-        if variance < 40:
-            bullet_sym_pts = 8.0
-            score += bullet_sym_pts
+        if variance < 35:
+            bullet_pts = 6.0 if banned_hits else 2.0
+            score += bullet_pts
             _drive(
-                bullet_sym_pts,
+                bullet_pts,
                 "uniform_bullets",
-                f"{len(bullets)} bullets look very evenly sized (template-like rhythm).",
+                f"{len(bullets)} bullets look evenly sized"
+                + (" and stock phrases are present." if banned_hits else " (common in templates — mild only)."),
             )
 
     ai_pct = max(0.0, min(99.0, round(score, 1)))
     human_pct = round(100.0 - ai_pct, 1)
 
     recommendations: list[str] = []
-    if ai_pct >= 10:
-        recommendations.append("Run Humanize rewrite, then edit in your own voice.")
     if banned_hits:
-        recommendations.append("Remove stock AI phrases and transition filler.")
+        recommendations.append("Strip stock AI phrases (furthermore, delve, robust, seamless, unlock…).")
     if dash_hits or semicolon_hits:
         recommendations.append("Replace em dashes, double hyphens, and semicolons with commas or periods.")
-    if contraction_hits < 2 and word_count > 60:
-        recommendations.append("Use natural contractions (don't, it's, you're).")
-    if avg_sentence_len > 28:
-        recommendations.append("Mix short punchy lines with longer ones.")
+    if ai_pct >= 25 and banned_hits:
+        recommendations.append("Run Local/Live humanize, then hand-edit a few lines in your own voice.")
+    if ai_pct >= 15 and not banned_hits and not dash_hits:
+        recommendations.append(
+            "Score is mostly formal-structure signals, not paste tells. Optional: mix one short sentence per paragraph."
+        )
+    if contraction_hits < 1 and word_count > 80 and ai_pct >= 12:
+        recommendations.append("Optional: a few contractions (don't, it's) if the audience allows a direct voice.")
     if not recommendations:
-        recommendations.append("Looks mostly human. Keep a light human edit pass before publish.")
+        recommendations.append(
+            "Looks like typed / formal human prose. Light proofread is enough — no need to force slangy contractions."
+        )
 
+    # Clarify when formal structure (not AI paste) is driving the score
+    formal_only = banned_hits == 0 and dash_hits == 0 and semicolon_hits == 0
+    if formal_only and ai_pct >= 8:
+        why.insert(
+            0,
+            "Note: no stock AI phrases or banned dashes found — remaining points are mostly formal writing shape, not proof you pasted from a model.",
+        )
     if not why:
-        why.append("No strong AI-style drivers beyond the baseline — score stays low.")
+        why.append("No strong AI-style drivers — score stays low.")
 
     return {
         "ai_pct": ai_pct,
@@ -273,6 +298,7 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
             "contraction_hits": contraction_hits,
             "unique_word_ratio": round(unique_ratio, 3),
             "bullet_count": len(bullets),
+            "calibration": "formal_analyst_v2",
         },
         "drivers": drivers,
         "why": why,
