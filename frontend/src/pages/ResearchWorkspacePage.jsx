@@ -1231,6 +1231,44 @@ export default function ResearchWorkspacePage() {
     }
   }
 
+  function exportTasksCsv() {
+    if (!tasks.length) {
+      setError("No tasks to export.");
+      return;
+    }
+    const esc = (v) => {
+      const s = String(v ?? "");
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = ["id", "title", "status", "priority", "description", "created_at", "updated_at"];
+    const lines = [header.join(",")];
+    for (const t of tasks) {
+      lines.push(
+        [
+          t.id,
+          t.title || "",
+          taskIsDone(t) ? "done" : t.status || "todo",
+          t.priority || "",
+          t.description || "",
+          t.created_at || "",
+          t.updated_at || "",
+        ]
+          .map(esc)
+          .join(",")
+      );
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeFilename(project?.title || "research")}_tasks.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setError("");
+    setMessage(`Exported ${tasks.length} task(s) to CSV.`);
+  }
+
   async function addTask() {
     if (!taskTitle.trim() || !activeId || isReviewer) return;
     beginBusy("Adding task");
@@ -2391,6 +2429,153 @@ export default function ResearchWorkspacePage() {
               )}
 
               <CollapsibleTile
+                title="Tasks"
+                summary={
+                  tasks.length
+                    ? `${tasks.filter((t) => !taskIsDone(t)).length} open · ${tasks.length} total`
+                    : "Collapsed · research checklist"
+                }
+                defaultOpen={false}
+              >
+                <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                  Check to cross off when done. Edit title inline. Open tasks count toward project progress.
+                </p>
+                {!isReviewer && (
+                  <div className="row">
+                    <input
+                      placeholder="Add research task"
+                      value={taskTitle}
+                      onChange={(e) => setTaskTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addTask();
+                        }
+                      }}
+                      disabled={busy}
+                    />
+                    <button className="btn" type="button" onClick={addTask} disabled={busy || !taskTitle.trim()}>
+                      Add
+                    </button>
+                    <button
+                      className="btn primary"
+                      type="button"
+                      onClick={exportTasksCsv}
+                      disabled={busy || !tasks.length}
+                      title="Download tasks as CSV"
+                    >
+                      Export CSV
+                    </button>
+                  </div>
+                )}
+                {isReviewer && (
+                  <div className="row">
+                    <button
+                      className="btn primary"
+                      type="button"
+                      onClick={exportTasksCsv}
+                      disabled={busy || !tasks.length}
+                      title="Download tasks as CSV"
+                    >
+                      Export CSV
+                    </button>
+                  </div>
+                )}
+                <div className="task-list stack">
+                  {!tasks.length && <p className="muted" style={{ margin: 0 }}>No tasks yet.</p>}
+                  {tasks.map((t) => {
+                    const done = taskIsDone(t);
+                    const editing = editingTaskId === t.id;
+                    return (
+                      <div
+                        key={t.id}
+                        className={`task-row row ${done ? "task-done" : ""}`}
+                        style={{ alignItems: "center", gap: "0.5rem" }}
+                      >
+                        <label
+                          className="task-check"
+                          title={done ? "Mark as not done" : "Cross off as done"}
+                          style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={done}
+                            onChange={() => toggleTaskDone(t)}
+                            disabled={busy || editing || isReviewer}
+                          />
+                          <span className="sr-only">{done ? "Done" : "Todo"}</span>
+                        </label>
+                        {editing && !isReviewer ? (
+                          <>
+                            <input
+                              style={{ flex: 1 }}
+                              value={editingTaskTitle}
+                              onChange={(e) => setEditingTaskTitle(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  saveTaskTitle(t);
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  cancelEditTask();
+                                }
+                              }}
+                              disabled={busy}
+                              autoFocus
+                            />
+                            <button className="btn primary" type="button" disabled={busy} onClick={() => saveTaskTitle(t)}>
+                              Save
+                            </button>
+                            <button className="btn ghost" type="button" disabled={busy} onClick={cancelEditTask}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              className="task-title"
+                              style={{
+                                flex: 1,
+                                textDecoration: done ? "line-through" : "none",
+                                opacity: done ? 0.65 : 1,
+                              }}
+                            >
+                              {t.title}
+                            </span>
+                            <span className={`badge ${done ? "good" : ""}`} style={{ fontSize: "0.75rem" }}>
+                              {done ? "done" : t.status || "todo"}
+                            </span>
+                            {!isReviewer && (
+                              <>
+                                <button
+                                  className="btn ghost"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => startEditTask(t)}
+                                  title="Edit task title"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  className="btn ghost"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => deleteTask(t)}
+                                  title="Delete task"
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </CollapsibleTile>
+
+              <CollapsibleTile
                 title="MITRE / STRIDE"
                 summary={maps.length ? `${maps.length} mapped` : "Collapsed · ATT&CK + STRIDE maps"}
                 defaultOpen={false}
@@ -2715,148 +2900,27 @@ export default function ResearchWorkspacePage() {
               </CollapsibleTile>
 
               {!isReviewer && (
-                <>
-                  <CollapsibleTile
-                    title="Tasks"
-                    summary={
-                      tasks.length
-                        ? `${tasks.filter((t) => !taskIsDone(t)).length} open · ${tasks.length} total`
-                        : "Collapsed · research checklist"
-                    }
-                    defaultOpen={false}
-                  >
-                  <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
-                    Check to cross off when done. Edit title inline. Open tasks count toward project progress.
-                  </p>
-                  <div className="row">
-                    <input
-                      placeholder="Add research task"
-                      value={taskTitle}
-                      onChange={(e) => setTaskTitle(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addTask();
-                        }
-                      }}
-                      disabled={busy}
-                    />
-                    <button className="btn" type="button" onClick={addTask} disabled={busy || !taskTitle.trim()}>
-                      Add
-                    </button>
-                  </div>
-                  <div className="task-list stack">
-                    {!tasks.length && <p className="muted" style={{ margin: 0 }}>No tasks yet.</p>}
-                    {tasks.map((t) => {
-                      const done = taskIsDone(t);
-                      const editing = editingTaskId === t.id;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`task-row row ${done ? "task-done" : ""}`}
-                          style={{ alignItems: "center", gap: "0.5rem" }}
-                        >
-                          <label
-                            className="task-check"
-                            title={done ? "Mark as not done" : "Cross off as done"}
-                            style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={done}
-                              onChange={() => toggleTaskDone(t)}
-                              disabled={busy || editing}
-                            />
-                            <span className="sr-only">{done ? "Done" : "Todo"}</span>
-                          </label>
-                          {editing ? (
-                            <>
-                              <input
-                                style={{ flex: 1 }}
-                                value={editingTaskTitle}
-                                onChange={(e) => setEditingTaskTitle(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    saveTaskTitle(t);
-                                  } else if (e.key === "Escape") {
-                                    e.preventDefault();
-                                    cancelEditTask();
-                                  }
-                                }}
-                                disabled={busy}
-                                autoFocus
-                              />
-                              <button className="btn primary" type="button" disabled={busy} onClick={() => saveTaskTitle(t)}>
-                                Save
-                              </button>
-                              <button className="btn ghost" type="button" disabled={busy} onClick={cancelEditTask}>
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <span
-                                className="task-title"
-                                style={{
-                                  flex: 1,
-                                  textDecoration: done ? "line-through" : "none",
-                                  opacity: done ? 0.65 : 1,
-                                }}
-                              >
-                                {t.title}
-                              </span>
-                              <span className={`badge ${done ? "good" : ""}`} style={{ fontSize: "0.75rem" }}>
-                                {done ? "done" : t.status || "todo"}
-                              </span>
-                              <button
-                                className="btn ghost"
-                                type="button"
-                                disabled={busy}
-                                onClick={() => startEditTask(t)}
-                                title="Edit task title"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                className="btn ghost"
-                                type="button"
-                                disabled={busy}
-                                onClick={() => deleteTask(t)}
-                                title="Delete task"
-                              >
-                                Delete
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  </CollapsibleTile>
-
-                  <CollapsibleTile
-                    title="Artifacts"
-                    summary={
-                      artifacts.length
-                        ? `${artifacts.length} file(s)`
-                        : "Collapsed · uploads"
-                    }
-                    defaultOpen={false}
-                  >
-                    <input type="file" onChange={uploadArtifact} />
-                    <ul className="muted">
-                      {artifacts.map((a) => (
-                        <li key={a.id}>
-                          {a.original_name} ({a.size_bytes} bytes)
-                        </li>
-                      ))}
-                    </ul>
-                    {!artifacts.length && (
-                      <p className="muted" style={{ margin: 0 }}>No artifacts uploaded yet.</p>
-                    )}
-                  </CollapsibleTile>
-                </>
+                <CollapsibleTile
+                  title="Artifacts"
+                  summary={
+                    artifacts.length
+                      ? `${artifacts.length} file(s)`
+                      : "Collapsed · uploads"
+                  }
+                  defaultOpen={false}
+                >
+                  <input type="file" onChange={uploadArtifact} />
+                  <ul className="muted">
+                    {artifacts.map((a) => (
+                      <li key={a.id}>
+                        {a.original_name} ({a.size_bytes} bytes)
+                      </li>
+                    ))}
+                  </ul>
+                  {!artifacts.length && (
+                    <p className="muted" style={{ margin: 0 }}>No artifacts uploaded yet.</p>
+                  )}
+                </CollapsibleTile>
               )}
             </div>
 
