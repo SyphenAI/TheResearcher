@@ -485,6 +485,55 @@ h3 {
   line-height: 1.4;
 }
 
+.collapse-tile {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(15, 23, 48, 0.65);
+  overflow: hidden;
+}
+
+.collapse-tile-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.collapse-tile-head:hover {
+  background: rgba(79, 140, 255, 0.08);
+}
+
+.collapse-tile-title {
+  font-weight: 650;
+  font-size: 0.95rem;
+}
+
+.collapse-tile-summary {
+  flex: 1;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapse-tile-chevron {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.collapse-tile-body {
+  padding: 0 0.75rem 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.65rem;
+}
+
 /* Encourage browser spell underlines in dark theme textareas */
 textarea[spellcheck="true"],
 textarea[spellcheck] {

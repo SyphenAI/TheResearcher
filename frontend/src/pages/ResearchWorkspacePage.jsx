@@ -34,6 +34,28 @@ function HelpIcon({ label = "Help", children }) {
   );
 }
 
+/** Desk tool tile — collapsed until needed so the left column stays readable. */
+function CollapsibleTile({ title, summary = "", defaultOpen = false, children }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div className={`collapse-tile ${open ? "open" : "closed"}`}>
+      <button
+        type="button"
+        className="collapse-tile-head"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="collapse-tile-title">{title}</span>
+        {!!summary && !open && <span className="collapse-tile-summary muted">{summary}</span>}
+        <span className="collapse-tile-chevron" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && <div className="collapse-tile-body stack">{children}</div>}
+    </div>
+  );
+}
+
 export default function ResearchWorkspacePage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -2368,242 +2390,271 @@ export default function ResearchWorkspacePage() {
                 </div>
               )}
 
-              <h3>MITRE / STRIDE</h3>
-              <div className="row">
-                <select value={mitrePick} onChange={(e) => setMitrePick(e.target.value)}>
-                  {(frameworks.mitre || []).map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.id} {t.name}
-                    </option>
-                  ))}
-                </select>
-                <button className="btn" type="button" onClick={addMitre}>
-                  Add ATT&CK
-                </button>
-              </div>
-              <div className="row">
-                <select value={stridePick} onChange={(e) => setStridePick(e.target.value)}>
-                  {(frameworks.stride || []).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-                <button className="btn" type="button" onClick={addStride}>
-                  Add STRIDE
-                </button>
-              </div>
-              <ul className="muted">
-                {maps.slice(0, 12).map((m) => (
-                  <li key={m.id}>
-                    [{m.framework}] {m.ref_id} {m.name}
-                  </li>
-                ))}
-              </ul>
-
-              <h3>Diagrams</h3>
-              <div className="row">
-                <button className="btn" type="button" onClick={() => makeDiagram("attack")} disabled={busy}>
-                  Attack path
-                </button>
-                <button className="btn" type="button" onClick={() => makeDiagram("stride")} disabled={busy}>
-                  STRIDE map
-                </button>
-                <button className="btn" type="button" onClick={() => makeDiagram("controls")} disabled={busy}>
-                  Control gaps
-                </button>
-                <button
-                  className="btn primary"
-                  type="button"
-                  onClick={insertDiagramIntoPaper}
-                  disabled={busy || !diagram || isReviewer}
-                  title="Insert the generated Mermaid diagram into the active section"
-                >
-                  Insert diagram into paper
-                </button>
-              </div>
-
-              <h3>Citations</h3>
-              <div className="panel stack" style={{ padding: "0.75rem" }}>
-                <strong>Scholar search</strong>
-                <p className="muted" style={{ margin: 0 }}>
-                  Find papers for this topic (Crossref + Semantic Scholar + OpenAlex). Ranked by topic fit,
-                  citations, and recency. Optional publication year filters keep results current. Not Google
-                  Scholar (no official API).
-                </p>
+              <CollapsibleTile
+                title="MITRE / STRIDE"
+                summary={maps.length ? `${maps.length} mapped` : "Collapsed · ATT&CK + STRIDE maps"}
+                defaultOpen={false}
+              >
                 <div className="row">
-                  <input
-                    style={{ flex: 1 }}
-                    value={scholarQ}
-                    onChange={(e) => setScholarQ(e.target.value)}
-                    placeholder="e.g. exposure management prioritization exploitability"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        searchScholar();
-                      }
-                    }}
-                  />
-                  <button className="btn" type="button" onClick={() => searchScholar()} disabled={busy}>
-                    Search
+                  <select value={mitrePick} onChange={(e) => setMitrePick(e.target.value)}>
+                    {(frameworks.mitre || []).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.id} {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn" type="button" onClick={addMitre}>
+                    Add ATT&CK
+                  </button>
+                </div>
+                <div className="row">
+                  <select value={stridePick} onChange={(e) => setStridePick(e.target.value)}>
+                    {(frameworks.stride || []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn" type="button" onClick={addStride}>
+                    Add STRIDE
+                  </button>
+                </div>
+                <ul className="muted">
+                  {maps.slice(0, 12).map((m) => (
+                    <li key={m.id}>
+                      [{m.framework}] {m.ref_id} {m.name}
+                    </li>
+                  ))}
+                </ul>
+                {!maps.length && <p className="muted" style={{ margin: 0 }}>No framework maps yet.</p>}
+              </CollapsibleTile>
+
+              <CollapsibleTile
+                title="Diagrams"
+                summary={diagram ? "Generated · ready to insert" : "Collapsed · attack / STRIDE / controls"}
+                defaultOpen={false}
+              >
+                <div className="row" style={{ flexWrap: "wrap" }}>
+                  <button className="btn" type="button" onClick={() => makeDiagram("attack")} disabled={busy}>
+                    Attack path
+                  </button>
+                  <button className="btn" type="button" onClick={() => makeDiagram("stride")} disabled={busy}>
+                    STRIDE map
+                  </button>
+                  <button className="btn" type="button" onClick={() => makeDiagram("controls")} disabled={busy}>
+                    Control gaps
                   </button>
                   <button
                     className="btn primary"
                     type="button"
-                    onClick={searchScholarForSection}
-                    disabled={busy}
-                    title="Use section title + prompt + project title"
+                    onClick={insertDiagramIntoPaper}
+                    disabled={busy || !diagram || isReviewer}
+                    title="Insert the generated Mermaid diagram into the active section"
                   >
-                    Best for this section
+                    Insert diagram into paper
                   </button>
                 </div>
-                <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-                  <label style={{ minWidth: 100 }}>
-                    Published from
-                    <input
-                      type="number"
-                      min={1990}
-                      max={2100}
-                      step={1}
-                      placeholder="YYYY"
-                      value={scholarYearFrom}
-                      onChange={(e) => setScholarYearFrom(e.target.value)}
-                      disabled={busy}
-                      title="Optional earliest publication year"
-                    />
-                  </label>
-                  <label style={{ minWidth: 100 }}>
-                    Published to
-                    <input
-                      type="number"
-                      min={1990}
-                      max={2100}
-                      step={1}
-                      placeholder="YYYY"
-                      value={scholarYearTo}
-                      onChange={(e) => setScholarYearTo(e.target.value)}
-                      disabled={busy}
-                      title="Optional latest publication year"
-                    />
-                  </label>
-                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("1y")}>
-                    Last 1y
-                  </button>
-                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("3y")}>
-                    Last 3y
-                  </button>
-                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("5y")}>
-                    Last 5y
-                  </button>
-                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("10y")}>
-                    Last 10y
-                  </button>
-                  <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("clear")}>
-                    Any year
-                  </button>
-                </div>
-                {scholarNote && <p className="muted" style={{ margin: 0 }}>{scholarNote}</p>}
-                {scholarHits.map((hit, idx) => (
-                  <div key={`${hit.doi || hit.title}-${idx}`} className="panel stack" style={{ padding: "0.55rem" }}>
-                    <div className="row" style={{ justifyContent: "space-between" }}>
-                      <strong style={{ fontSize: "0.92rem" }}>{hit.title}</strong>
-                      <span className="badge">score {hit.score}</span>
-                    </div>
-                    <div className="muted" style={{ fontSize: "0.82rem" }}>
-                      {hit.author || "Author"} · {hit.year || "n.d."}
-                      {hit.venue ? ` · ${hit.venue}` : ""}
-                      {hit.cited_by_count != null ? ` · cited≈${hit.cited_by_count}` : ""}
-                      {hit.sources?.length ? ` · ${hit.sources.join("+")}` : ""}
-                    </div>
-                    {hit.abstract && (
-                      <div style={{ fontSize: "0.85rem" }}>
-                        {hit.abstract.slice(0, 220)}
-                        {hit.abstract.length > 220 ? "…" : ""}
-                      </div>
-                    )}
-                    <div className="row">
-                      {hit.url && (
-                        <a className="btn ghost" href={hit.url} target="_blank" rel="noreferrer">
-                          Open
-                        </a>
-                      )}
-                      <button
-                        className="btn"
-                        type="button"
-                        disabled={busy || isReviewer}
-                        onClick={() => addScholarCitation(hit)}
-                      >
-                        Add citation
-                      </button>
-                      <button
-                        className="btn primary"
-                        type="button"
-                        disabled={busy || isReviewer || !activeSection}
-                        onClick={() => insertScholarIntoPaper(hit)}
-                      >
-                        Insert into paper
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <form className="stack" onSubmit={addCitation}>
-                <div className="grid-3">
-                  <label>
-                    Title
-                    <input
-                      value={citeForm.title}
-                      onChange={(e) => setCiteForm({ ...citeForm, title: e.target.value })}
-                      required
-                    />
-                  </label>
-                  <label>
-                    URL
-                    <input
-                      value={citeForm.url}
-                      onChange={(e) => setCiteForm({ ...citeForm, url: e.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Style
-                    <select
-                      value={citeForm.style}
-                      onChange={(e) => setCiteForm({ ...citeForm, style: e.target.value })}
-                    >
-                      <option value="apa">APA</option>
-                      <option value="mla">MLA</option>
-                      <option value="chicago">Chicago</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="row">
-                  <input
-                    placeholder="Author"
-                    value={citeForm.author}
-                    onChange={(e) => setCiteForm({ ...citeForm, author: e.target.value })}
-                  />
-                  <input
-                    placeholder="Year"
-                    value={citeForm.year}
-                    onChange={(e) => setCiteForm({ ...citeForm, year: e.target.value })}
-                  />
-                  <button className="btn" type="submit">
-                    Add citation
-                  </button>
-                </div>
-              </form>
-              <ul className="muted">
-                {citations.map((c) => (
-                  <li key={c.id}>
-                    {c.formatted}{" "}
-                    <button className="btn ghost" type="button" onClick={() => insertCitation(c.formatted)}>
-                      Insert
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+                  Generated diagrams also open on the right <strong>Diagram</strong> tab.
+                </p>
+              </CollapsibleTile>
 
-              <h3>SaaS / control review</h3>
+              <CollapsibleTile
+                title="Citations"
+                summary={
+                  citations.length
+                    ? `${citations.length} in library`
+                    : "Collapsed · scholar search + manual cite"
+                }
+                defaultOpen={false}
+              >
+                <div className="panel stack" style={{ padding: "0.75rem" }}>
+                  <strong>Scholar search</strong>
+                  <p className="muted" style={{ margin: 0 }}>
+                    Crossref + Semantic Scholar + OpenAlex. Optional year filters. Not Google Scholar.
+                  </p>
+                  <div className="row">
+                    <input
+                      style={{ flex: 1 }}
+                      value={scholarQ}
+                      onChange={(e) => setScholarQ(e.target.value)}
+                      placeholder="e.g. exposure management prioritization exploitability"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          searchScholar();
+                        }
+                      }}
+                    />
+                    <button className="btn" type="button" onClick={() => searchScholar()} disabled={busy}>
+                      Search
+                    </button>
+                    <button
+                      className="btn primary"
+                      type="button"
+                      onClick={searchScholarForSection}
+                      disabled={busy}
+                      title="Use section title + prompt + project title"
+                    >
+                      Best for this section
+                    </button>
+                  </div>
+                  <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
+                    <label style={{ minWidth: 100 }}>
+                      Published from
+                      <input
+                        type="number"
+                        min={1990}
+                        max={2100}
+                        step={1}
+                        placeholder="YYYY"
+                        value={scholarYearFrom}
+                        onChange={(e) => setScholarYearFrom(e.target.value)}
+                        disabled={busy}
+                        title="Optional earliest publication year"
+                      />
+                    </label>
+                    <label style={{ minWidth: 100 }}>
+                      Published to
+                      <input
+                        type="number"
+                        min={1990}
+                        max={2100}
+                        step={1}
+                        placeholder="YYYY"
+                        value={scholarYearTo}
+                        onChange={(e) => setScholarYearTo(e.target.value)}
+                        disabled={busy}
+                        title="Optional latest publication year"
+                      />
+                    </label>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("1y")}>
+                      Last 1y
+                    </button>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("3y")}>
+                      Last 3y
+                    </button>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("5y")}>
+                      Last 5y
+                    </button>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("10y")}>
+                      Last 10y
+                    </button>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("clear")}>
+                      Any year
+                    </button>
+                  </div>
+                  {scholarNote && <p className="muted" style={{ margin: 0 }}>{scholarNote}</p>}
+                  {scholarHits.map((hit, idx) => (
+                    <div key={`${hit.doi || hit.title}-${idx}`} className="panel stack" style={{ padding: "0.55rem" }}>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <strong style={{ fontSize: "0.92rem" }}>{hit.title}</strong>
+                        <span className="badge">score {hit.score}</span>
+                      </div>
+                      <div className="muted" style={{ fontSize: "0.82rem" }}>
+                        {hit.author || "Author"} · {hit.year || "n.d."}
+                        {hit.venue ? ` · ${hit.venue}` : ""}
+                        {hit.cited_by_count != null ? ` · cited≈${hit.cited_by_count}` : ""}
+                        {hit.sources?.length ? ` · ${hit.sources.join("+")}` : ""}
+                      </div>
+                      {hit.abstract && (
+                        <div style={{ fontSize: "0.85rem" }}>
+                          {hit.abstract.slice(0, 220)}
+                          {hit.abstract.length > 220 ? "…" : ""}
+                        </div>
+                      )}
+                      <div className="row">
+                        {hit.url && (
+                          <a className="btn ghost" href={hit.url} target="_blank" rel="noreferrer">
+                            Open
+                          </a>
+                        )}
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={busy || isReviewer}
+                          onClick={() => addScholarCitation(hit)}
+                        >
+                          Add citation
+                        </button>
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={busy || isReviewer || !activeSection}
+                          onClick={() => insertScholarIntoPaper(hit)}
+                        >
+                          Insert into paper
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <form className="stack" onSubmit={addCitation}>
+                  <strong>Manual citation</strong>
+                  <div className="grid-3">
+                    <label>
+                      Title
+                      <input
+                        value={citeForm.title}
+                        onChange={(e) => setCiteForm({ ...citeForm, title: e.target.value })}
+                        required
+                      />
+                    </label>
+                    <label>
+                      URL
+                      <input
+                        value={citeForm.url}
+                        onChange={(e) => setCiteForm({ ...citeForm, url: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Style
+                      <select
+                        value={citeForm.style}
+                        onChange={(e) => setCiteForm({ ...citeForm, style: e.target.value })}
+                      >
+                        <option value="apa">APA</option>
+                        <option value="mla">MLA</option>
+                        <option value="chicago">Chicago</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="row">
+                    <input
+                      placeholder="Author"
+                      value={citeForm.author}
+                      onChange={(e) => setCiteForm({ ...citeForm, author: e.target.value })}
+                    />
+                    <input
+                      placeholder="Year"
+                      value={citeForm.year}
+                      onChange={(e) => setCiteForm({ ...citeForm, year: e.target.value })}
+                    />
+                    <button className="btn" type="submit">
+                      Add citation
+                    </button>
+                  </div>
+                </form>
+                <ul className="muted">
+                  {citations.map((c) => (
+                    <li key={c.id}>
+                      {c.formatted}{" "}
+                      <button className="btn ghost" type="button" onClick={() => insertCitation(c.formatted)}>
+                        Insert
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {!citations.length && (
+                  <p className="muted" style={{ margin: 0 }}>No citations in the project library yet.</p>
+                )}
+              </CollapsibleTile>
+
+              <CollapsibleTile
+                title="SaaS / control review"
+                summary={controls.length ? `${controls.length} controls` : "Collapsed · control packs"}
+                defaultOpen={false}
+              >
               <form className="stack" onSubmit={addControl}>
                 <div className="row">
                   <select value={controlPack} onChange={(e) => setControlPack(e.target.value)}>
@@ -2631,25 +2682,31 @@ export default function ResearchWorkspacePage() {
                   </li>
                 ))}
               </ul>
+              </CollapsibleTile>
 
-              <h3>Peer review</h3>
-              <form className="stack" onSubmit={addReview}>
-                <textarea
-                  value={reviewText}
-                  onChange={(e) => setReviewText(e.target.value)}
-                  placeholder="Peer review comments for this section or whole project"
-                />
-                <button className="btn" type="submit">
-                  Submit review
-                </button>
-              </form>
-              <ul className="muted">
-                {reviews.map((r) => (
-                  <li key={r.id}>
-                    [{r.status}] {r.reviewer}: {r.comments}
-                  </li>
-                ))}
-              </ul>
+              <CollapsibleTile
+                title="Peer review"
+                summary={reviews.length ? `${reviews.length} reviews` : "Collapsed · comments"}
+                defaultOpen={false}
+              >
+                <form className="stack" onSubmit={addReview}>
+                  <textarea
+                    value={reviewText}
+                    onChange={(e) => setReviewText(e.target.value)}
+                    placeholder="Peer review comments for this section or whole project"
+                  />
+                  <button className="btn" type="submit">
+                    Submit review
+                  </button>
+                </form>
+                <ul className="muted">
+                  {reviews.map((r) => (
+                    <li key={r.id}>
+                      [{r.status}] {r.reviewer}: {r.comments}
+                    </li>
+                  ))}
+                </ul>
+              </CollapsibleTile>
 
               {!isReviewer && (
                 <>
