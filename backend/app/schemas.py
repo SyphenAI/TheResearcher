@@ -269,6 +269,10 @@ class AiCheckOut(BaseModel):
     human_pct: float
     signals: dict[str, Any]
     recommendations: list[str]
+    # Plain-English score drivers (why the % moved up/down)
+    why: list[str] = Field(default_factory=list)
+    drivers: list[dict[str, Any]] = Field(default_factory=list)
+    scope: str = "section"  # section | paper (desk convenience)
     created_at: datetime
     extracted_text: str | None = None
     filename: str | None = None

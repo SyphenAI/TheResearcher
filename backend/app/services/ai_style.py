@@ -133,32 +133,111 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
     contraction_hits = len(re.findall(r"\b\w+n't\b|\bit's\b|\byou're\b|\bwe're\b|\bthey're\b", text, re.I))
     unique_ratio = len(set(w.lower() for w in words)) / word_count
 
+    drivers: list[dict[str, Any]] = []
+    why: list[str] = []
+
+    def _drive(points: float, label: str, detail: str, *, direction: str = "up") -> None:
+        if abs(points) < 0.05:
+            return
+        drivers.append(
+            {
+                "points": round(points, 1),
+                "direction": direction,
+                "label": label,
+                "detail": detail,
+            }
+        )
+        sign = "+" if points > 0 else ""
+        why.append(f"{sign}{points:.0f}: {detail}")
+
     score = 20.0
-    if avg_sentence_len > 24:
-        score += 12
+    _drive(20.0, "baseline", "Every draft starts at a 20 baseline before style signals.", direction="up")
+
     if avg_sentence_len > 32:
-        score += 10
-    score += min(banned_hits * 8, 24)
-    score += min(dash_hits * 4, 12)
-    score += min(semicolon_hits * 2, 8)
-    score += min(passive_hits * 1.5, 12)
+        score += 22
+        _drive(
+            22,
+            "long_sentences",
+            f"Average sentence length is {avg_sentence_len:.1f} words (very long / even cadence).",
+        )
+    elif avg_sentence_len > 24:
+        score += 12
+        _drive(
+            12,
+            "long_sentences",
+            f"Average sentence length is {avg_sentence_len:.1f} words (on the long side).",
+        )
+
+    banned_pts = min(banned_hits * 8, 24)
+    score += banned_pts
+    if banned_hits:
+        _drive(
+            banned_pts,
+            "stock_phrases",
+            f"Found {banned_hits} stock AI-ish phrase hit(s) (e.g. furthermore, delve, robust).",
+        )
+
+    dash_pts = min(dash_hits * 4, 12)
+    score += dash_pts
+    if dash_hits:
+        _drive(dash_pts, "dashes", f"Found {dash_hits} em dash / double-hyphen hit(s).")
+
+    semi_pts = min(semicolon_hits * 2, 8)
+    score += semi_pts
+    if semicolon_hits:
+        _drive(semi_pts, "semicolons", f"Found {semicolon_hits} semicolon(s).")
+
+    passive_pts = min(passive_hits * 1.5, 12)
+    score += passive_pts
+    if passive_hits:
+        _drive(passive_pts, "passive_voice", f"Detected about {passive_hits} passive-ish construction(s).")
+
     if contraction_hits / word_count < 0.01 and word_count > 80:
         score += 10
+        _drive(
+            10,
+            "few_contractions",
+            "Very few contractions for this length — reads more formal/AI-smooth.",
+        )
     if unique_ratio < 0.45 and word_count > 100:
         score += 10
+        _drive(
+            10,
+            "low_vocabulary_variety",
+            f"Word variety is low (unique ratio {unique_ratio:.2f}).",
+        )
     if unique_ratio > 0.65:
         score -= 8
+        _drive(
+            -8,
+            "varied_vocabulary",
+            f"Word variety looks natural (unique ratio {unique_ratio:.2f}).",
+            direction="down",
+        )
     if contraction_hits > 3:
         score -= 6
+        _drive(
+            -6,
+            "natural_contractions",
+            f"Found {contraction_hits} contractions (don't / it's / you're) — more human voice.",
+            direction="down",
+        )
 
     # Paragraph symmetry (many equal-ish bullets) often reads synthetic
     bullets = re.findall(r"^\s*[-*]\s+.+$", text, flags=re.MULTILINE)
+    bullet_sym_pts = 0.0
     if len(bullets) >= 6:
         lengths = [len(b) for b in bullets]
         mean = sum(lengths) / len(lengths)
         variance = sum((x - mean) ** 2 for x in lengths) / len(lengths)
         if variance < 40:
-            score += 8
+            bullet_sym_pts = 8.0
+            score += bullet_sym_pts
+            _drive(
+                bullet_sym_pts,
+                "uniform_bullets",
+                f"{len(bullets)} bullets look very evenly sized (template-like rhythm).",
+            )
 
     ai_pct = max(0.0, min(99.0, round(score, 1)))
     human_pct = round(100.0 - ai_pct, 1)
@@ -177,6 +256,9 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
     if not recommendations:
         recommendations.append("Looks mostly human. Keep a light human edit pass before publish.")
 
+    if not why:
+        why.append("No strong AI-style drivers beyond the baseline — score stays low.")
+
     return {
         "ai_pct": ai_pct,
         "human_pct": human_pct,
@@ -192,6 +274,8 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
             "unique_word_ratio": round(unique_ratio, 3),
             "bullet_count": len(bullets),
         },
+        "drivers": drivers,
+        "why": why,
         "recommendations": recommendations,
     }
 

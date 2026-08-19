@@ -52,6 +52,8 @@ export default function ResearchWorkspacePage() {
   const [judgeOut, setJudgeOut] = useState(null);
   /** Latest AI checker result for the active section body (refreshed on demand). */
   const [sectionAiCheck, setSectionAiCheck] = useState(null);
+  const [paperAiCheck, setPaperAiCheck] = useState(null);
+  const [aiCheckPanel, setAiCheckPanel] = useState(null); // last detailed result to show "why"
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
@@ -764,8 +766,40 @@ export default function ResearchWorkspacePage() {
         mode: "quick",
       }),
     });
-    setSectionAiCheck(result);
-    return result;
+    const enriched = { ...result, scope: "section", scope_title: activeSection?.title || "Section" };
+    setSectionAiCheck(enriched);
+    setAiCheckPanel(enriched);
+    return enriched;
+  }
+
+  async function runPaperAiCheck() {
+    const parts = (sections || [])
+      .map((s) => (s.content_md || "").trim())
+      .filter(Boolean);
+    if (!parts.length) {
+      setPaperAiCheck(null);
+      setError("Full paper is empty — nothing to AI-check.");
+      return null;
+    }
+    const text = parts.join("\n\n---\n\n");
+    const result = await api("/api/research/ai-check", {
+      method: "POST",
+      body: JSON.stringify({
+        text,
+        source_label: `desk-paper:${activeId}`,
+        mode: "quick",
+      }),
+    });
+    const enriched = {
+      ...result,
+      scope: "paper",
+      scope_title: project?.title || "Full paper",
+      section_count: parts.length,
+      char_count: text.length,
+    };
+    setPaperAiCheck(enriched);
+    setAiCheckPanel(enriched);
+    return enriched;
   }
 
   async function refreshDesk({ withAiCheck = true } = {}) {
@@ -1630,10 +1664,8 @@ export default function ResearchWorkspacePage() {
               try {
                 const ai = await runSectionAiCheck();
                 if (ai) {
-                  const tip = (ai.recommendations || [])[0];
                   setMessage(
-                    `AI check (current paper): ${ai.ai_pct}% likelihood` +
-                      (tip ? ` · ${tip}` : "")
+                    `AI check (section “${ai.scope_title}”): ${ai.ai_pct}% likelihood — see Why below.`
                   );
                 }
               } catch (e) {
@@ -1643,9 +1675,33 @@ export default function ResearchWorkspacePage() {
               }
             }}
             disabled={busy || !activeSection}
-            title="Run a fresh local AI-likelihood check on the active section body"
+            title="Local AI-likelihood check on the active section, with why breakdown"
           >
-            {busyLabel?.includes("AI check") ? "Checking…" : "AI check section"}
+            {busyLabel?.includes("current section") ? "Checking…" : "AI check section"}
+          </button>
+          <button
+            className="btn"
+            type="button"
+            onClick={async () => {
+              beginBusy("AI check (full paper)");
+              setError("");
+              try {
+                const ai = await runPaperAiCheck();
+                if (ai) {
+                  setMessage(
+                    `AI check (full paper): ${ai.ai_pct}% likelihood across ${ai.section_count || "all"} sections — see Why below.`
+                  );
+                }
+              } catch (e) {
+                setError(e.message || "Full paper AI check failed.");
+              } finally {
+                endBusy();
+              }
+            }}
+            disabled={busy || !sections.length}
+            title="Local AI-likelihood check on all sections joined, with why breakdown"
+          >
+            {busyLabel?.includes("full paper") ? "Checking…" : "AI check full paper"}
           </button>
           <button className="btn" type="button" onClick={() => refreshGate()} disabled={busy}>
             Refresh publish gate
@@ -1781,9 +1837,25 @@ export default function ResearchWorkspacePage() {
                 {sectionAiCheck ? `${sectionAiCheck.ai_pct}%` : "Not run"}
               </strong>
               <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
-                {sectionAiCheck
-                  ? "Latest on current paper"
-                  : "Use AI check section or Refresh desk"}
+                {sectionAiCheck ? "Latest section scan" : "AI check section"}
+              </div>
+            </div>
+            <div className="metric">
+              <span className="muted">AI check (full paper)</span>
+              <strong
+                className={
+                  paperAiCheck
+                    ? paperAiCheck.ai_pct >= 10
+                      ? "badge bad"
+                      : "badge good"
+                    : ""
+                }
+                style={{ fontSize: paperAiCheck ? undefined : "1rem" }}
+              >
+                {paperAiCheck ? `${paperAiCheck.ai_pct}%` : "Not run"}
+              </strong>
+              <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                {paperAiCheck ? "All sections joined" : "AI check full paper"}
               </div>
             </div>
             <div className="metric">
@@ -1802,6 +1874,88 @@ export default function ResearchWorkspacePage() {
               </div>
             </div>
           </div>
+
+          {aiCheckPanel && (
+            <div className="panel stack" style={{ borderColor: "rgba(79, 140, 255, 0.35)" }}>
+              <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                <div className="row" style={{ gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <strong>
+                    AI check why · {aiCheckPanel.scope === "paper" ? "full paper" : "section"}
+                  </strong>
+                  <span
+                    className={
+                      aiCheckPanel.ai_pct >= 10 ? "badge bad" : "badge good"
+                    }
+                  >
+                    {aiCheckPanel.ai_pct}% AI · {aiCheckPanel.human_pct}% human
+                  </span>
+                  <span className="muted" style={{ fontSize: "0.85rem" }}>
+                    {aiCheckPanel.scope_title || ""}
+                    {aiCheckPanel.section_count
+                      ? ` · ${aiCheckPanel.section_count} sections`
+                      : ""}
+                  </span>
+                </div>
+                <button
+                  className="btn ghost"
+                  type="button"
+                  onClick={() => setAiCheckPanel(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+              <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                Local heuristic (not a forensic detector). Score starts at a baseline, then style
+                signals push it up or down.
+              </p>
+              {(aiCheckPanel.why || []).length > 0 && (
+                <div>
+                  <strong style={{ fontSize: "0.9rem" }}>Why this score</strong>
+                  <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1.1rem" }}>
+                    {(aiCheckPanel.why || []).map((line, idx) => (
+                      <li key={`why-${idx}`} style={{ marginBottom: "0.2rem" }}>
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(aiCheckPanel.recommendations || []).length > 0 && (
+                <div>
+                  <strong style={{ fontSize: "0.9rem" }}>What to do</strong>
+                  <ul style={{ margin: "0.35rem 0 0", paddingLeft: "1.1rem" }}>
+                    {(aiCheckPanel.recommendations || []).map((line, idx) => (
+                      <li key={`rec-${idx}`} style={{ marginBottom: "0.2rem" }}>
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {aiCheckPanel.signals && (
+                <div className="row" style={{ flexWrap: "wrap", gap: "0.35rem" }}>
+                  <span className="badge">
+                    words {aiCheckPanel.signals.word_count ?? "—"}
+                  </span>
+                  <span className="badge">
+                    avg sentence {aiCheckPanel.signals.avg_sentence_len ?? "—"}
+                  </span>
+                  <span className="badge">
+                    stock phrases {aiCheckPanel.signals.banned_phrase_hits ?? 0}
+                  </span>
+                  <span className="badge">
+                    dashes {aiCheckPanel.signals.dash_hits ?? 0}
+                  </span>
+                  <span className="badge">
+                    contractions {aiCheckPanel.signals.contraction_hits ?? 0}
+                  </span>
+                  <span className="badge">
+                    unique ratio {aiCheckPanel.signals.unique_word_ratio ?? "—"}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="grid-2">
             <div className="panel stack">

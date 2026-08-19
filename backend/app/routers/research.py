@@ -599,6 +599,10 @@ def _run_ai_check(
     sample = text[:500]
     signals = dict(result["signals"] or {})
     signals["check_mode"] = mode_norm
+    why = list(result.get("why") or [])
+    drivers = list(result.get("drivers") or [])
+    signals["why"] = why
+    signals["drivers"] = drivers
     if live_panel:
         signals["live_panel_count"] = len(live_panel)
 
@@ -620,6 +624,8 @@ def _run_ai_check(
         human_pct=row.human_pct,
         signals=signals,
         recommendations=result["recommendations"],
+        why=why,
+        drivers=drivers,
         created_at=row.created_at,
         mode=mode_norm,
         used_live=used_live,
