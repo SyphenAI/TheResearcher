@@ -63,6 +63,8 @@ export default function ResearchWorkspacePage() {
   const [findCaseSensitive, setFindCaseSensitive] = useState(false);
   const [findWholeWord, setFindWholeWord] = useState(true);
   const [findMatchCount, setFindMatchCount] = useState(null);
+  const [spellIssues, setSpellIssues] = useState([]);
+  const [spellMessage, setSpellMessage] = useState("");
   const paperEditorRef = useRef(null);
   const [busy, setBusy] = useState(false);
   /** What long-running desk action is in flight (shown in sticky banner). */
@@ -188,6 +190,8 @@ export default function ResearchWorkspacePage() {
     setHumanizeUndo(null);
     setSectionAiCheck(null);
     setJudgeOut(null);
+    setSpellIssues([]);
+    setSpellMessage("");
     setSaveState("saved");
     setSaveToast("");
   }, [sectionId]);
@@ -839,10 +843,10 @@ export default function ResearchWorkspacePage() {
     return n;
   }
 
-  function findNextInPaper() {
+  function findNextInPaper(overrideNeedle) {
     const el = paperEditorRef.current;
     const text = activeSection?.content_md || "";
-    const needle = findText;
+    const needle = overrideNeedle != null ? overrideNeedle : findText;
     if (!el || !needle) {
       setError("Enter a word or phrase to find.");
       return;
@@ -956,6 +960,51 @@ export default function ResearchWorkspacePage() {
     setFindText(sel);
     setError("");
     setMessage(`Find set to “${sel}”. Type a replacement and Replace.`);
+  }
+
+  async function checkAllSpelling() {
+    if (!activeSection) {
+      setError("Open a section to spell-check.");
+      return;
+    }
+    const text = activeSection.content_md || "";
+    if (!text.trim()) {
+      setSpellIssues([]);
+      setSpellMessage("Section is empty.");
+      return;
+    }
+    beginBusy("Spell check all");
+    setError("");
+    try {
+      const res = await api("/api/research/spellcheck", {
+        method: "POST",
+        body: JSON.stringify({ text, max_issues: 80 }),
+      });
+      setSpellIssues(res.issues || []);
+      setSpellMessage(res.message || "");
+      setMessage(res.message || "Spell check finished.");
+    } catch (e) {
+      setError(e.message || "Spell check failed.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  function applySpellIssue(issue, suggestion) {
+    if (!issue) return;
+    const word = issue.word || issue.normalized || "";
+    const fix = suggestion || (issue.suggestions || [])[0] || "";
+    setFindText(word);
+    setReplaceText(fix);
+    setFindWholeWord(true);
+    setFindCaseSensitive(false);
+    setError("");
+    setMessage(
+      fix
+        ? `Ready to replace “${word}” → “${fix}”. Click Replace or Replace all.`
+        : `Find set to “${word}”. Pick a suggestion or type a fix.`
+    );
+    requestAnimationFrame(() => findNextInPaper(word));
   }
 
   /**
@@ -2685,12 +2734,16 @@ export default function ResearchWorkspacePage() {
                           <strong>Spell check · find &amp; replace</strong>
                           <HelpIcon label="Spell check help">
                             <div>
-                              Red underlines come from the browser spellchecker (right‑click a word for
-                              suggestions). Enable English (US/UK) in your OS/browser if needed.
+                              <strong>Inline:</strong> red underlines while you type (browser spellcheck —
+                              right‑click a word for suggestions). Needs English enabled in OS/browser.
                             </div>
                             <div style={{ marginTop: "0.35rem" }}>
-                              Or flag a word: double‑click it → <strong>Use selection</strong> → type the
-                              fix → <strong>Replace</strong> / <strong>Replace all</strong>.
+                              <strong>Check all:</strong> scans the section with a local dictionary and
+                              lists possible misspellings with clickable fixes.
+                            </div>
+                            <div style={{ marginTop: "0.35rem" }}>
+                              Manual: double‑click a word → <strong>Use selection</strong> → type the fix →{" "}
+                              <strong>Replace</strong> / <strong>Replace all</strong>.
                             </div>
                           </HelpIcon>
                         </div>
@@ -2754,6 +2807,15 @@ export default function ResearchWorkspacePage() {
                         <button className="btn ghost" type="button" disabled={busy || !findText} onClick={countPaperMatches}>
                           Count
                         </button>
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={busy || !activeSection}
+                          onClick={checkAllSpelling}
+                          title="Scan this section with the local English dictionary"
+                        >
+                          {busyLabel?.includes("Spell check") ? "Checking…" : "Check all"}
+                        </button>
                       </div>
                       <div className="row" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
                         <label className="row" style={{ gap: "0.35rem", alignItems: "center" }}>
@@ -2776,6 +2838,64 @@ export default function ResearchWorkspacePage() {
                           <span className="badge">{findMatchCount} match(es) in this section</span>
                         )}
                       </div>
+                      {spellMessage && (
+                        <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+                          {spellMessage}{" "}
+                          <span className="muted">(inline red underlines = browser spellcheck while you type)</span>
+                        </p>
+                      )}
+                      {!!spellIssues.length && (
+                        <div className="spell-issue-list stack" style={{ gap: "0.35rem", maxHeight: 220, overflow: "auto" }}>
+                          {spellIssues.map((issue) => (
+                            <div
+                              key={issue.normalized || issue.word}
+                              className="row"
+                              style={{
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                flexWrap: "wrap",
+                                gap: "0.35rem",
+                                borderBottom: "1px solid var(--border)",
+                                paddingBottom: "0.3rem",
+                              }}
+                            >
+                              <div>
+                                <strong>{issue.word}</strong>
+                                <span className="muted" style={{ marginLeft: "0.4rem", fontSize: "0.8rem" }}>
+                                  ×{issue.count}
+                                </span>
+                              </div>
+                              <div className="row" style={{ flexWrap: "wrap", gap: "0.25rem" }}>
+                                {(issue.suggestions || []).length ? (
+                                  (issue.suggestions || []).slice(0, 4).map((sug) => (
+                                    <button
+                                      key={`${issue.normalized}-${sug}`}
+                                      className="btn ghost"
+                                      type="button"
+                                      style={{ padding: "0.15rem 0.45rem", fontSize: "0.78rem" }}
+                                      disabled={busy}
+                                      onClick={() => applySpellIssue(issue, sug)}
+                                      title={`Replace with ${sug}`}
+                                    >
+                                      {sug}
+                                    </button>
+                                  ))
+                                ) : (
+                                  <button
+                                    className="btn ghost"
+                                    type="button"
+                                    style={{ padding: "0.15rem 0.45rem", fontSize: "0.78rem" }}
+                                    disabled={busy}
+                                    onClick={() => applySpellIssue(issue, "")}
+                                  >
+                                    Flag only
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="row" style={{ justifyContent: "flex-end", alignItems: "center", gap: "0.35rem" }}>

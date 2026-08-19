@@ -32,6 +32,7 @@ from app.schemas import (
     JudgeRequest,
     RewriteRequest,
     SectionOut,
+    SpellcheckRequest,
     SummarizeRequest,
     TextExtractOut,
 )
@@ -144,6 +145,17 @@ def apply_assistant_output(
     db.commit()
     db.refresh(section)
     return section
+
+
+@router.post("/spellcheck")
+def spellcheck_paper(
+    body: SpellcheckRequest,
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Local dictionary spellcheck for paper drafts (Check all on the desk)."""
+    from app.services.spellcheck import spellcheck_text
+
+    return spellcheck_text(body.text or "", max_issues=body.max_issues or 80)
 
 
 @router.post("/rewrite")

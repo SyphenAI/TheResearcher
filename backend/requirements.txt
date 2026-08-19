@@ -18,3 +18,4 @@ email-validator==2.2.0
 pymupdf==1.25.3
 pytesseract==0.3.13
 Pillow==11.1.0
+pyspellchecker==0.8.2

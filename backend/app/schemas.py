@@ -351,6 +351,11 @@ class ExportRequest(BaseModel):
     as_draft: bool = False
 
 
+class SpellcheckRequest(BaseModel):
+    text: str = ""
+    max_issues: int = 80
+
+
 class HealthOut(BaseModel):
     status: str
     checks: dict[str, Any]
