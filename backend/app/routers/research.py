@@ -601,8 +601,10 @@ def _run_ai_check(
     signals["check_mode"] = mode_norm
     why = list(result.get("why") or [])
     drivers = list(result.get("drivers") or [])
+    recommendations = list(result.get("recommendations") or [])
     signals["why"] = why
     signals["drivers"] = drivers
+    signals["recommendations"] = recommendations
     if live_panel:
         signals["live_panel_count"] = len(live_panel)
 
@@ -623,7 +625,7 @@ def _run_ai_check(
         ai_pct=row.ai_pct,
         human_pct=row.human_pct,
         signals=signals,
-        recommendations=result["recommendations"],
+        recommendations=recommendations,
         why=why,
         drivers=drivers,
         created_at=row.created_at,
@@ -634,31 +636,46 @@ def _run_ai_check(
     )
 
 
+def _ai_check_row_to_out(row: AiCheckResult) -> AiCheckOut:
+    signals: dict = {}
+    try:
+        signals = json.loads(row.signals_json or "{}")
+    except json.JSONDecodeError:
+        signals = {}
+    why = list(signals.get("why") or [])
+    drivers = list(signals.get("drivers") or [])
+    recommendations = list(signals.get("recommendations") or [])
+    mode = str(signals.get("check_mode") or "quick")
+    return AiCheckOut(
+        id=row.id,
+        source_label=row.source_label,
+        ai_pct=row.ai_pct,
+        human_pct=row.human_pct,
+        signals=signals,
+        recommendations=recommendations,
+        why=why,
+        drivers=drivers,
+        created_at=row.created_at,
+        mode=mode,
+        used_live=bool(signals.get("live_panel_count")),
+        models_used=[],
+        live_panel=[],
+    )
+
+
 @router.get("/ai-check/history", response_model=list[AiCheckOut])
 def ai_check_history(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
+    limit: int = 50,
+    source_prefix: str | None = None,
 ) -> list[AiCheckOut]:
-    rows = db.query(AiCheckResult).order_by(AiCheckResult.id.desc()).limit(50).all()
-    out: list[AiCheckOut] = []
-    for row in rows:
-        signals = {}
-        try:
-            signals = json.loads(row.signals_json or "{}")
-        except json.JSONDecodeError:
-            signals = {}
-        out.append(
-            AiCheckOut(
-                id=row.id,
-                source_label=row.source_label,
-                ai_pct=row.ai_pct,
-                human_pct=row.human_pct,
-                signals=signals,
-                recommendations=[],
-                created_at=row.created_at,
-            )
-        )
-    return out
+    """Recent AI checks. Optional source_prefix filters desk labels (desk-section:6, desk-paper:2)."""
+    q = db.query(AiCheckResult)
+    if source_prefix:
+        q = q.filter(AiCheckResult.source_label.like(f"{source_prefix}%"))
+    rows = q.order_by(AiCheckResult.id.desc()).limit(max(1, min(int(limit or 50), 100))).all()
+    return [_ai_check_row_to_out(row) for row in rows]
 
 
 @router.delete("/ai-check/history/{check_id}", status_code=204)

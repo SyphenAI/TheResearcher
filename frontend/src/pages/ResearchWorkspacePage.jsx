@@ -170,14 +170,18 @@ export default function ResearchWorkspacePage() {
     setCitations(c);
     setReviews(r);
     setControls(ctrl);
+    let nextSectionId = null;
     if (secs.length) {
       setSectionId((current) => {
         const still = secs.find((s) => s.id === current);
-        return still ? still.id : secs[0].id;
+        nextSectionId = still ? still.id : secs[0].id;
+        return nextSectionId;
       });
     } else {
       setSectionId(null);
     }
+    // Restore last AI check results for this project / section after refresh
+    await loadPersistedAiChecks(secs, nextSectionId);
   }
 
   useEffect(() => {
@@ -198,6 +202,42 @@ export default function ResearchWorkspacePage() {
     ]).catch((e) => setError(e.message));
   }, [activeId]);
 
+  // When switching sections, restore that section's last AI check (keep paper check)
+  useEffect(() => {
+    if (!activeId || !sectionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const secRows = await api(
+          `/api/research/ai-check/history?limit=1&source_prefix=${encodeURIComponent(
+            `desk-section:${sectionId}`
+          )}`
+        );
+        if (cancelled) return;
+        const secMeta = sections.find((s) => s.id === sectionId);
+        if (secRows?.[0]) {
+          const sectionCheck = hydrateAiCheck(
+            secRows[0],
+            "section",
+            secMeta?.title || "Section"
+          );
+          setSectionAiCheck(sectionCheck);
+          setAiCheckPanel((prev) =>
+            prev?.scope === "paper" ? prev : sectionCheck
+          );
+        } else {
+          setSectionAiCheck(null);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, sectionId]);
+
   function liveModelPayload() {
     const sel = liveModelOptions.find((o) => o.id === liveModelId) || liveModelOptions[0];
     if (!sel || sel.id === "auto" || !sel.provider) return {};
@@ -212,13 +252,58 @@ export default function ResearchWorkspacePage() {
   useEffect(() => {
     setHumanizeDraft(null);
     setHumanizeUndo(null);
-    setSectionAiCheck(null);
     setJudgeOut(null);
     setSpellIssues([]);
     setSpellMessage("");
     setSaveState("saved");
     setSaveToast("");
   }, [sectionId]);
+
+  function hydrateAiCheck(row, scope, scopeTitle) {
+    if (!row) return null;
+    return {
+      ...row,
+      scope,
+      scope_title: scopeTitle,
+      why: row.why || row.signals?.why || [],
+      drivers: row.drivers || row.signals?.drivers || [],
+      recommendations: row.recommendations || row.signals?.recommendations || [],
+    };
+  }
+
+  async function loadPersistedAiChecks(secs, currentSectionId) {
+    if (!activeId) return;
+    try {
+      const paperRows = await api(
+        `/api/research/ai-check/history?limit=1&source_prefix=${encodeURIComponent(`desk-paper:${activeId}`)}`
+      );
+      if (paperRows?.[0]) {
+        const paper = hydrateAiCheck(paperRows[0], "paper", project?.title || "Full paper");
+        setPaperAiCheck(paper);
+        setAiCheckPanel((prev) => prev || paper);
+      }
+      const sid = currentSectionId || sectionId || secs?.[0]?.id;
+      if (sid) {
+        const secRows = await api(
+          `/api/research/ai-check/history?limit=1&source_prefix=${encodeURIComponent(`desk-section:${sid}`)}`
+        );
+        const secMeta = (secs || sections || []).find((s) => s.id === sid);
+        if (secRows?.[0]) {
+          const sectionCheck = hydrateAiCheck(
+            secRows[0],
+            "section",
+            secMeta?.title || "Section"
+          );
+          setSectionAiCheck(sectionCheck);
+          setAiCheckPanel((prev) => prev || sectionCheck);
+        } else {
+          setSectionAiCheck(null);
+        }
+      }
+    } catch {
+      // History restore is best-effort; desk still works without it.
+    }
+  }
 
   useEffect(() => {
     if (humanizeDraft && humanizeRef.current) {
@@ -1966,7 +2051,7 @@ export default function ResearchWorkspacePage() {
               </div>
               <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
                 Local heuristic (not a forensic detector). Score starts at a baseline, then style
-                signals push it up or down.
+                signals push it up or down. Last run is restored after refresh from AI check history.
               </p>
               {(aiCheckPanel.why || []).length > 0 && (
                 <div>
