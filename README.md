@@ -107,14 +107,12 @@ data/             Local runtime data (gitignored DB files)
 scripts/          Helper scripts
 docker-compose.yml
 Dockerfile
-BACKLOG.md        Build tracker
 ```
 
 ## Development workflow
 
 1. Branch: work on `pre-prod`
-2. Track progress in `BACKLOG.md`
-3. Open a PR or request promotion to `main` only after review/approval
+2. Open a PR or request promotion to `main` only after review/approval
 
 ### Local API without full Docker UI rebuild
 
@@ -147,7 +145,7 @@ Vite proxies `/api` to port 50080.
 ## Contributing
 
 1. Use `pre-prod` for feature work
-2. Keep changes scoped and documented in `BACKLOG.md`
+2. Keep changes scoped; use clear commit messages
 3. Report issues in GitHub Issues
 4. Request features with clear SecOps research use cases
 
