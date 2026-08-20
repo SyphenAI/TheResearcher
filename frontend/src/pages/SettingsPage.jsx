@@ -14,6 +14,8 @@ const EMPTY = {
   humanize_before_export_hint: true,
   semantic_scholar_api_key: "",
   openalex_api_key: "",
+  serpapi_api_key: "",
+  jina_api_key: "",
   follow_topics: [
     "offensive security",
     "exposure management",
@@ -392,7 +394,8 @@ export default function SettingsPage() {
         <h2>Scholar search (optional keys)</h2>
         <p className="muted" style={{ margin: 0 }}>
           Crossref works without keys. Semantic Scholar is usable lightly without a key. OpenAlex often
-          wants a free key from openalex.org. Keys stay local in Settings.
+          wants a free key from openalex.org. Google Scholar needs a SerpAPI key (serpapi.com → Google
+          Scholar engine). Keys stay local in Settings.
         </p>
         <label>
           Semantic Scholar API key
@@ -414,6 +417,32 @@ export default function SettingsPage() {
             placeholder="Optional free key"
           />
         </label>
+        <label>
+          SerpAPI key (Google Scholar)
+          <input
+            type="password"
+            value={form.serpapi_api_key || ""}
+            disabled={readOnly}
+            onChange={(e) => setField("serpapi_api_key", e.target.value)}
+            placeholder="Optional — enables Google Scholar in scholar search"
+          />
+        </label>
+        <label>
+          Jina Reader API key (URL fetch — free tier)
+          <input
+            type="password"
+            value={form.jina_api_key || ""}
+            disabled={readOnly}
+            onChange={(e) => setField("jina_api_key", e.target.value)}
+            placeholder="Optional free key from jina.ai (not required to pay)"
+          />
+        </label>
+        <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+          Paste article URLs into a Research prompt and the desk fetches + summarizes them. Most open
+          pages work with no key. Cloudflare-heavy sites often need a <strong>free</strong> Jina Reader
+          key (jina.ai → API key; free tokens / higher rate limit — you do not have to buy a plan).
+          Fully free alternative: open the article in your browser and paste the text into the prompt.
+        </p>
 
         <h2>Topics to follow (dashboard feed)</h2>
         <p className="muted" style={{ margin: 0 }}>

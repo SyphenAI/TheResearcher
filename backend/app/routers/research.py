@@ -25,6 +25,7 @@ from app.schemas import (
     AiCheckRequest,
     ApplyAssistantRequest,
     ArtifactOut,
+    ArtifactUrlCreate,
     AssistantRequest,
     AssistantResponse,
     ExportRequest,
@@ -33,10 +34,17 @@ from app.schemas import (
     RewriteRequest,
     SectionOut,
     SpellcheckRequest,
+    StyleFixRequest,
     SummarizeRequest,
     TextExtractOut,
 )
-from app.services.ai_style import humanize_text, local_judge, local_research_assist, score_ai_likelihood
+from app.services.ai_style import (
+    fix_ai_style_tells,
+    humanize_text,
+    local_judge,
+    local_research_assist,
+    score_ai_likelihood,
+)
 from app.services.document_text import (
     SUPPORTED_EXTENSIONS,
     DocumentExtractError,
@@ -61,8 +69,13 @@ def research_assistant(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> AssistantResponse:
-    """Desk Research Assistant. multi_agent=true -> agents.run_research_panel (slow)."""
+    """Desk Research Assistant. multi_agent=true -> agents.run_research_panel (slow).
+
+    http(s) URLs in the prompt are fetched + summarized into Linked sources context.
+    """
     from app.services.agents import run_research_panel, run_single_role
+    from app.services.app_settings import load_app_settings
+    from app.services.summarize import URL_RE, build_url_source_briefs, extract_urls
 
     context = ""
     section: ResearchSection | None = None
@@ -77,10 +90,88 @@ def research_assistant(
             if project and body.evidence_mode is None:
                 evidence_mode = bool(getattr(project, "evidence_mode", True))
 
+    rules = load_app_settings()
+    raw_prompt = body.prompt or ""
+    enrichment = build_url_source_briefs(
+        db,
+        raw_prompt,
+        jina_api_key=(rules.get("jina_api_key") or "").strip() or None,
+        user_name=user.username,
+        mode="auto",
+    )
+    prompt = raw_prompt
+    urls_in_prompt = extract_urls(raw_prompt)
+    non_url_text = URL_RE.sub(" ", raw_prompt)
+    non_url_text = " ".join(non_url_text.split())
+    url_heavy_prompt = bool(urls_in_prompt) and len(non_url_text) < 48
+
+    # URL-only (or nearly) prompt where every fetch failed: do not burn tokens on an empty panel.
+    if url_heavy_prompt and urls_in_prompt and not (enrichment.get("ok") or []):
+        fail_lines = []
+        for row in enrichment.get("failed") or []:
+            fail_lines.append(f"- {row.get('url')}: {row.get('error') or 'fetch failed'}")
+        if not fail_lines:
+            fail_lines = [f"- {u}: fetch failed" for u in urls_in_prompt]
+        content = (
+            "## Linked URL could not be read\n\n"
+            "The Research prompt was mostly a URL, and automated fetch could not get the article "
+            "(often Cloudflare). The multi-agent panel was **not** run, so you do not get an empty "
+            "critic/red-team dump.\n\n"
+            "### What to do\n"
+            "1. Paste the article text into the Research prompt (with a short ask), then run again, or\n"
+            "2. Add a **Jina Reader API key** in Settings and retry the URL, or\n"
+            "3. Use Search → Summarize with pasted text, then bring notes into this section.\n\n"
+            "### Fetch errors\n"
+            + "\n".join(fail_lines)
+            + "\n"
+        )
+        if section and project:
+            project.publish_ready = False
+            db.commit()
+        return AssistantResponse(
+            content=content,
+            agent_chars=0,
+            notes=(enrichment.get("notes") or "URL fetch failed; panel skipped.").strip(),
+            citations=[],
+            providers_used=[],
+            roles={},
+            used_live=False,
+            critique="",
+            red_team="",
+            source_urls={
+                "ok": enrichment.get("ok") or [],
+                "failed": enrichment.get("failed") or [],
+            },
+        )
+
+    # Keep the user prompt clean. Label section paper vs linked URL sources separately so
+    # models/local fill do not conflate an in-progress paper title with the fetched article.
+    prompt = raw_prompt
+    section_paper = (context or "").strip()
+    context_parts: list[str] = []
+    if section_paper:
+        context_parts.append(
+            "## Section paper in progress (NOT the linked URL source)\n"
+            "Do not treat the following as the fetched article. It is the user's current section body.\n\n"
+            + section_paper
+        )
+    if enrichment.get("briefs_md"):
+        context_parts.append(
+            "## Operator instructions (do not copy into the draft)\n"
+            "- Linked source briefs below were fetched from URL(s) in the Research prompt.\n"
+            "- Write a research-paper source note (synopsis + implications for exposure management "
+            "practice), not a risk-rating scorecard. Cite the URL(s).\n"
+            "- Do not paste operator lines or dump raw briefs into the draft.\n"
+            "- Add applied ATT&CK/program framing only if the ask needs it "
+            "(attack path, exposure validation, or 'full framing').\n\n"
+            + enrichment["briefs_md"]
+        )
+    context = "\n\n".join(context_parts).strip()
+
     if body.multi_agent:
         result = run_research_panel(
             db,
-            prompt=body.prompt,
+            prompt=prompt,
             context_md=context,
             mode=body.mode,
             providers=body.providers,
@@ -93,7 +184,7 @@ def research_assistant(
             db,
             provider=provider,
             role=body.mode or "researcher",
-            prompt=body.prompt,
+            prompt=prompt,
             context_md=context,
         )
 
@@ -103,16 +194,29 @@ def research_assistant(
         project.publish_ready = False
         db.commit()
 
+    notes = (result.get("notes") or "").strip()
+    if enrichment.get("notes"):
+        notes = f"{notes} {enrichment['notes']}".strip() if notes else enrichment["notes"]
+
+    citations = list(result.get("citations") or [])
+    for cite in enrichment.get("citations") or []:
+        if cite not in citations:
+            citations.append(cite)
+
     return AssistantResponse(
         content=result.get("content", ""),
         agent_chars=result.get("agent_chars", 0),
-        notes=result.get("notes", ""),
-        citations=result.get("citations", []),
+        notes=notes,
+        citations=citations,
         providers_used=result.get("providers_used", []),
         roles=result.get("roles", {}),
         used_live=bool(result.get("used_live")),
         critique=result.get("critique", ""),
         red_team=result.get("red_team", ""),
+        source_urls={
+            "ok": enrichment.get("ok") or [],
+            "failed": enrichment.get("failed") or [],
+        },
     )
 
 
@@ -156,6 +260,15 @@ def spellcheck_paper(
     from app.services.spellcheck import spellcheck_text
 
     return spellcheck_text(body.text or "", max_issues=body.max_issues or 80)
+
+
+@router.post("/style-fix")
+def style_fix_text(
+    body: StyleFixRequest,
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Fix AI-check style tells (range dashes, em/-- dashes, semicolons). Preview only."""
+    return fix_ai_style_tells(body.text or "")
 
 
 @router.post("/rewrite")
@@ -918,11 +1031,55 @@ async def upload_artifact(
 
     artifact = Artifact(
         project_id=project_id,
+        kind="file",
         filename=stored,
         original_name=file.filename or stored,
         content_type=file.content_type or "application/octet-stream",
         size_bytes=len(content),
+        source_url="",
         notes=str(target),
+    )
+    db.add(artifact)
+    db.commit()
+    db.refresh(artifact)
+    return artifact
+
+
+@router.post("/projects/{project_id}/artifacts/url", response_model=ArtifactOut, status_code=201)
+def save_artifact_url(
+    project_id: int,
+    body: ArtifactUrlCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Artifact:
+    """Save a reference URL for the project (no file download)."""
+    from urllib.parse import urlparse
+
+    project = db.query(Project).filter(Project.id == project_id, Project.archived.is_(False)).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    url = (body.url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Enter a valid http(s) URL.")
+
+    title = (body.title or "").strip()
+    if not title:
+        host = parsed.netloc
+        path_bit = (parsed.path or "").rstrip("/").split("/")[-1]
+        title = f"{host}/{path_bit}" if path_bit else host
+    title = title[:240]
+
+    artifact = Artifact(
+        project_id=project_id,
+        kind="url",
+        filename="",
+        original_name=title,
+        content_type="text/uri-list",
+        size_bytes=0,
+        source_url=url[:1024],
+        notes=(body.notes or "").strip()[:4000],
     )
     db.add(artifact)
     db.commit()
@@ -937,7 +1094,7 @@ async def download_artifact(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, RedirectResponse
     from app.services.storage_paths import artifacts_dir, project_dir
 
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -951,14 +1108,20 @@ async def download_artifact(
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
+    if (artifact.kind or "file") == "url":
+        if not artifact.source_url:
+            raise HTTPException(status_code=404, detail="URL artifact has no link.")
+        return RedirectResponse(url=artifact.source_url, status_code=307)
+
     # Prefer path recorded in notes; fall back to active storage layout
     candidates = []
-    if artifact.notes:
+    if artifact.notes and not str(artifact.notes).lower().startswith("http"):
         candidates.append(Path(artifact.notes))
-    candidates.append(artifacts_dir(project.id, project.title) / artifact.filename)
+    if artifact.filename:
+        candidates.append(artifacts_dir(project.id, project.title) / artifact.filename)
     # archived path may still be under storage/archive
     root = project_dir(project.id, project.title, create=False) if not project.archived else None
-    if root:
+    if root and artifact.filename:
         candidates.append(root / "artifacts" / artifact.filename)
 
     path = next((p for p in candidates if p and p.exists()), None)

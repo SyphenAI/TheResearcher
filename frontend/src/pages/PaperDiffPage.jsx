@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import TextDiffPanes from "../components/TextDiffPanes";
+import { formatLocalDateTime } from "../utils/datetime";
 
 /**
  * Full-page paper release diff (open in a new browser tab from the desk).
@@ -155,7 +156,7 @@ export default function PaperDiffPage() {
               {releases.map((r) => (
                 <option key={r.id} value={r.id}>
                   v{r.version_label} · {r.kind}
-                  {r.created_at ? ` · ${new Date(r.created_at).toLocaleString()}` : ""}
+                  {r.created_at ? ` · ${formatLocalDateTime(r.created_at)}` : ""}
                 </option>
               ))}
             </select>
@@ -167,7 +168,7 @@ export default function PaperDiffPage() {
               {releases.map((r) => (
                 <option key={r.id} value={r.id}>
                   v{r.version_label} · {r.kind}
-                  {r.created_at ? ` · ${new Date(r.created_at).toLocaleString()}` : ""}
+                  {r.created_at ? ` · ${formatLocalDateTime(r.created_at)}` : ""}
                 </option>
               ))}
             </select>

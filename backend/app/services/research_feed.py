@@ -57,7 +57,9 @@ def _parse_dt(value: str | None) -> datetime | None:
 def _iso(dt: datetime | None) -> str:
     if not dt:
         return ""
-    return dt.astimezone(timezone.utc).isoformat()
+    from app.services.timefmt import to_iso_utc
+
+    return to_iso_utc(dt) or ""
 
 
 def fetch_google_news(

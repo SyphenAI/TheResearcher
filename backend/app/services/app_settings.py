@@ -22,6 +22,10 @@ DEFAULTS: dict[str, Any] = {
     # Optional scholarly API keys (local only). Crossref works without keys.
     "semantic_scholar_api_key": "",
     "openalex_api_key": "",
+    # SerpAPI key enables Google Scholar in merged scholar search.
+    "serpapi_api_key": "",
+    # Optional Jina Reader key for Cloudflare-protected URL fetches in Research Assistant.
+    "jina_api_key": "",
     # Dashboard research news / paper feed topics (max 8 used).
     "follow_topics": [
         "offensive security",
@@ -78,6 +82,8 @@ def _write_settings(data: dict[str, Any]) -> dict[str, Any]:
     )
     current["semantic_scholar_api_key"] = str(current.get("semantic_scholar_api_key") or "")
     current["openalex_api_key"] = str(current.get("openalex_api_key") or "")
+    current["serpapi_api_key"] = str(current.get("serpapi_api_key") or "")
+    current["jina_api_key"] = str(current.get("jina_api_key") or "")
     current["follow_topics"] = _normalize_follow_topics(current.get("follow_topics"))
     try:
         current["daily_cost_alert_usd"] = float(

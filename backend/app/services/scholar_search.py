@@ -1,4 +1,7 @@
-"""Scholarly article search for research notes (Crossref + optional Semantic Scholar / OpenAlex)."""
+"""Scholarly article search for research notes.
+
+Providers: Crossref, Semantic Scholar, OpenAlex, and Google Scholar via SerpAPI.
+"""
 
 from __future__ import annotations
 
@@ -36,15 +39,93 @@ def _parse_year(value: Any) -> int | None:
     return None
 
 
+def _last_day_of_month(year: int, month: int) -> int:
+    if month == 12:
+        return 31
+    from datetime import date, timedelta
+
+    return (date(year, month + 1, 1) - timedelta(days=1)).day
+
+
+def _parse_date_bound(value: Any, *, end: bool = False) -> tuple[int | None, str | None]:
+    """Parse YYYY / YYYY-MM / YYYY-MM-DD into (year, iso_date).
+
+    start bound -> first day of precision; end bound -> last day of precision.
+    """
+    if value is None or value == "":
+        return None, None
+    raw = str(value).strip()
+    m = re.fullmatch(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", raw)
+    if not m:
+        # Fall back to year-only scrape (e.g. "2024-ish")
+        y = _parse_year(raw)
+        if y is None:
+            return None, None
+        iso = f"{y}-12-31" if end else f"{y}-01-01"
+        return y, iso
+    year = int(m.group(1))
+    if not (1800 <= year <= 2100):
+        return None, None
+    month_s, day_s = m.group(2), m.group(3)
+    if month_s is None:
+        return year, (f"{year}-12-31" if end else f"{year}-01-01")
+    month = int(month_s)
+    if not (1 <= month <= 12):
+        return year, (f"{year}-12-31" if end else f"{year}-01-01")
+    if day_s is None:
+        day = _last_day_of_month(year, month) if end else 1
+        return year, f"{year:04d}-{month:02d}-{day:02d}"
+    day = int(day_s)
+    day = min(max(day, 1), _last_day_of_month(year, month))
+    return year, f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _bound_label(raw: Any, year: int | None, iso: str | None) -> str:
+    text = str(raw or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}(-\d{2})?", text):
+        return text[:7]
+    if year is not None:
+        return str(year)
+    if iso:
+        return iso[:7]
+    return "…"
+
+
+def _normalize_date_range(
+    *,
+    date_from: int | str | None = None,
+    date_to: int | str | None = None,
+    year_from: int | str | None = None,
+    year_to: int | str | None = None,
+) -> dict[str, Any]:
+    """Normalize optional date/year bounds for provider filters + post-filter."""
+    # Prefer explicit date_* over year_* when both are sent.
+    start_raw = date_from if date_from not in (None, "") else year_from
+    end_raw = date_to if date_to not in (None, "") else year_to
+    y_from, iso_from = _parse_date_bound(start_raw, end=False)
+    y_to, iso_to = _parse_date_bound(end_raw, end=True)
+    if iso_from and iso_to and iso_from > iso_to:
+        start_raw, end_raw = end_raw, start_raw
+        y_from, iso_from = _parse_date_bound(start_raw, end=False)
+        y_to, iso_to = _parse_date_bound(end_raw, end=True)
+    label = ""
+    if iso_from or iso_to:
+        label = f"{_bound_label(start_raw, y_from, iso_from)}–{_bound_label(end_raw, y_to, iso_to)}"
+    return {
+        "year_from": y_from,
+        "year_to": y_to,
+        "iso_from": iso_from,
+        "iso_to": iso_to,
+        "label": label,
+    }
+
+
 def _normalize_year_range(
     year_from: int | str | None = None,
     year_to: int | str | None = None,
 ) -> tuple[int | None, int | None]:
-    y_from = _parse_year(year_from)
-    y_to = _parse_year(year_to)
-    if y_from is not None and y_to is not None and y_from > y_to:
-        y_from, y_to = y_to, y_from
-    return y_from, y_to
+    bounds = _normalize_date_range(year_from=year_from, year_to=year_to)
+    return bounds["year_from"], bounds["year_to"]
 
 
 def _year_in_range(
@@ -98,15 +179,19 @@ def search_crossref(
     limit: int = 10,
     year_from: int | None = None,
     year_to: int | None = None,
+    iso_from: str | None = None,
+    iso_to: str | None = None,
 ) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if len(q) < 2:
         return []
     filters: list[str] = []
-    if year_from is not None:
-        filters.append(f"from-pub-date:{year_from}-01-01")
-    if year_to is not None:
-        filters.append(f"until-pub-date:{year_to}-12-31")
+    start = iso_from or (f"{year_from}-01-01" if year_from is not None else None)
+    end = iso_to or (f"{year_to}-12-31" if year_to is not None else None)
+    if start:
+        filters.append(f"from-pub-date:{start}")
+    if end:
+        filters.append(f"until-pub-date:{end}")
     filter_q = f"&filter={quote(','.join(filters))}" if filters else ""
     url = (
         "https://api.crossref.org/works"
@@ -240,15 +325,19 @@ def search_openalex(
     api_key: str | None = None,
     year_from: int | None = None,
     year_to: int | None = None,
+    iso_from: str | None = None,
+    iso_to: str | None = None,
 ) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if len(q) < 2:
         return []
     filters: list[str] = []
-    if year_from is not None:
-        filters.append(f"from_publication_date:{year_from}-01-01")
-    if year_to is not None:
-        filters.append(f"to_publication_date:{year_to}-12-31")
+    start = iso_from or (f"{year_from}-01-01" if year_from is not None else None)
+    end = iso_to or (f"{year_to}-12-31" if year_to is not None else None)
+    if start:
+        filters.append(f"from_publication_date:{start}")
+    if end:
+        filters.append(f"to_publication_date:{end}")
     filter_q = f"&filter={quote(','.join(filters))}" if filters else ""
     url = (
         "https://api.openalex.org/works"
@@ -316,6 +405,138 @@ def search_openalex(
     return out
 
 
+def _extract_doi(*candidates: Any) -> str:
+    for raw in candidates:
+        if not raw:
+            continue
+        text = str(raw)
+        m = re.search(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", text, flags=re.I)
+        if m:
+            return m.group(0).rstrip(").,;")
+    return ""
+
+
+def _parse_gs_publication(summary: str) -> tuple[str, str, str]:
+    """Best-effort author / year / venue from Google Scholar publication_info.summary."""
+    summary = (summary or "").strip()
+    if not summary:
+        return "", "", ""
+    year = ""
+    m_year = re.search(r"\b(19|20)\d{2}\b", summary)
+    if m_year:
+        year = m_year.group(0)
+    # Typical: "A Author, B Author - Venue, 2021 - publisher.com"
+    left = summary
+    venue = ""
+    if " - " in summary:
+        parts = [p.strip() for p in summary.split(" - ") if p.strip()]
+        if parts:
+            left = parts[0]
+        if len(parts) >= 2:
+            venue = re.sub(r",?\s*(19|20)\d{2}\b", "", parts[1]).strip(" ,")
+    authors = [a.strip() for a in re.split(r",\s*|\s+and\s+", left) if a.strip()]
+    author = ", ".join(authors[:4]) + (" et al." if len(authors) > 4 else "")
+    return author, year, venue
+
+
+def search_google_scholar(
+    query: str,
+    *,
+    limit: int = 10,
+    api_key: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+) -> list[dict[str, Any]]:
+    """Google Scholar organic results via SerpAPI (requires api_key)."""
+    q = (query or "").strip()
+    key = (api_key or "").strip()
+    if len(q) < 2 or not key:
+        return []
+
+    params: dict[str, Any] = {
+        "engine": "google_scholar",
+        "q": q,
+        "api_key": key,
+        "num": max(1, min(int(limit or 10), 20)),
+        "hl": "en",
+    }
+    if year_from is not None:
+        params["as_ylo"] = int(year_from)
+    if year_to is not None:
+        params["as_yhi"] = int(year_to)
+
+    try:
+        with httpx.Client(timeout=35.0, headers={"User-Agent": USER_AGENT}) as client:
+            resp = client.get("https://serpapi.com/search.json", params=params)
+            if resp.status_code >= 400:
+                return []
+            data = resp.json()
+    except Exception:  # noqa: BLE001
+        return []
+
+    if isinstance(data, dict) and data.get("error"):
+        return []
+
+    out: list[dict[str, Any]] = []
+    for item in data.get("organic_results") or []:
+        title = (item.get("title") or "").strip()
+        if not title:
+            continue
+        pub = item.get("publication_info") or {}
+        authors_list = [
+            a.get("name")
+            for a in (pub.get("authors") or [])
+            if isinstance(a, dict) and a.get("name")
+        ]
+        author_from_summary, year, venue = _parse_gs_publication(str(pub.get("summary") or ""))
+        if authors_list:
+            author = ", ".join(authors_list[:4]) + (" et al." if len(authors_list) > 4 else "")
+            authors = authors_list
+        else:
+            author = author_from_summary
+            authors = [a.strip() for a in author_from_summary.split(",") if a.strip()]
+
+        link = (item.get("link") or "").strip()
+        resources = item.get("resources") or []
+        resource_links = [
+            str(r.get("link") or "")
+            for r in resources
+            if isinstance(r, dict) and r.get("link")
+        ]
+        doi = _extract_doi(link, *resource_links, item.get("snippet") or "")
+        url_out = link or (f"https://doi.org/{doi}" if doi else "")
+        if doi and "doi.org" not in (url_out or "").lower():
+            # Prefer a stable DOI landing page when we found one in resources.
+            for cand in resource_links:
+                if "doi.org" in cand.lower() or _extract_doi(cand):
+                    url_out = cand if "doi.org" in cand.lower() else f"https://doi.org/{doi}"
+                    break
+
+        cited = 0
+        try:
+            cited = int(((item.get("inline_links") or {}).get("cited_by") or {}).get("total") or 0)
+        except (TypeError, ValueError):
+            cited = 0
+
+        abstract = re.sub(r"\s+", " ", str(item.get("snippet") or "")).strip()
+        out.append(
+            {
+                "source": "google_scholar",
+                "title": title,
+                "authors": authors,
+                "author": author or "Author",
+                "year": year,
+                "venue": venue,
+                "abstract": abstract[:600],
+                "doi": doi,
+                "url": url_out,
+                "cited_by_count": cited,
+                "work_type": str(item.get("type") or "paper"),
+            }
+        )
+    return out
+
+
 def search_scholar(
     query: str,
     *,
@@ -323,12 +544,17 @@ def search_scholar(
     sources: list[str] | None = None,
     semantic_scholar_key: str | None = None,
     openalex_key: str | None = None,
+    serpapi_key: str | None = None,
     year_from: int | str | None = None,
     year_to: int | str | None = None,
+    date_from: int | str | None = None,
+    date_to: int | str | None = None,
 ) -> dict[str, Any]:
     """Search multiple scholarly APIs and rank for topic fit + impact.
 
-    Optional year_from / year_to (publication year) filter providers when set.
+    Optional date_from / date_to (YYYY, YYYY-MM, or YYYY-MM-DD). year_from / year_to
+    still accepted. Crossref + OpenAlex use full dates; Semantic Scholar + Google Scholar
+    use publication year. Google Scholar requires a SerpAPI key.
     """
     q = (query or "").strip()
     if len(q) < 2:
@@ -339,11 +565,24 @@ def search_scholar(
             "sources_tried": [],
             "year_from": None,
             "year_to": None,
+            "date_from": None,
+            "date_to": None,
             "message": "Type at least 2 characters.",
         }
 
-    y_from, y_to = _normalize_year_range(year_from, year_to)
-    wanted = sources or ["crossref", "semantic_scholar", "openalex"]
+    bounds = _normalize_date_range(
+        date_from=date_from,
+        date_to=date_to,
+        year_from=year_from,
+        year_to=year_to,
+    )
+    y_from = bounds["year_from"]
+    y_to = bounds["year_to"]
+    iso_from = bounds["iso_from"]
+    iso_to = bounds["iso_to"]
+    range_label = bounds["label"]
+
+    wanted = sources or ["crossref", "semantic_scholar", "openalex", "google_scholar"]
     wanted = [s.lower().strip() for s in wanted if s]
     per = max(5, min(int(limit or 12), 20))
     sources_tried: list[str] = []
@@ -375,7 +614,14 @@ def search_scholar(
     if "crossref" in wanted:
         try:
             _add_all(
-                search_crossref(q, limit=per, year_from=y_from, year_to=y_to),
+                search_crossref(
+                    q,
+                    limit=per,
+                    year_from=y_from,
+                    year_to=y_to,
+                    iso_from=iso_from,
+                    iso_to=iso_to,
+                ),
                 "crossref",
             )
         except Exception as exc:  # noqa: BLE001
@@ -404,6 +650,8 @@ def search_scholar(
                 api_key=openalex_key,
                 year_from=y_from,
                 year_to=y_to,
+                iso_from=iso_from,
+                iso_to=iso_to,
             )
             if rows:
                 _add_all(rows, "openalex")
@@ -415,6 +663,31 @@ def search_scholar(
                     )
         except Exception as exc:  # noqa: BLE001
             source_errors.append(f"openalex: {exc}")
+
+    if "google_scholar" in wanted:
+        if not (serpapi_key or "").strip():
+            sources_tried.append("google_scholar")
+            source_errors.append(
+                "google_scholar: set SerpAPI key in Settings to include Google Scholar"
+            )
+        else:
+            try:
+                rows = search_google_scholar(
+                    q,
+                    limit=per,
+                    api_key=serpapi_key,
+                    year_from=y_from,
+                    year_to=y_to,
+                )
+                if rows:
+                    _add_all(rows, "google_scholar")
+                else:
+                    sources_tried.append("google_scholar")
+                    source_errors.append(
+                        "google_scholar: no results (check SerpAPI key / quota / query)"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                source_errors.append(f"google_scholar: {exc}")
 
     results = list(merged.values())
     for r in results:
@@ -428,25 +701,21 @@ def search_scholar(
     )
     results = results[: max(1, min(int(limit or 12), 25))]
 
-    year_note = ""
-    year_label = ""
-    if y_from is not None or y_to is not None:
-        lo = str(y_from) if y_from is not None else "…"
-        hi = str(y_to) if y_to is not None else "…"
-        year_label = f"{lo}–{hi}"
-        year_note = f" Published {year_label}."
+    range_note = f" Published {range_label}." if range_label else ""
 
     if results:
         empty_msg = ""
-    elif year_label:
+    elif range_label:
         empty_msg = (
-            f"No scholarly hits in {year_label}. "
-            "Try a shorter topic, widen the year range, or clear the year filters."
+            f"No scholarly hits in {range_label}. "
+            "Try a tighter topic (add domain words like cybersecurity / exposure management), "
+            "widen the date range, or clear the date filters."
         )
     else:
         empty_msg = (
-            "No scholarly hits. Try a shorter topic phrase, technique name, "
-            "or standard (e.g. MITRE ATT&CK exposure management)."
+            "No scholarly hits. Add domain terms to the query "
+            "(e.g. cybersecurity exposure management prioritization), "
+            "or try a technique / standard name."
         )
 
     return {
@@ -457,12 +726,14 @@ def search_scholar(
         "source_errors": source_errors,
         "year_from": y_from,
         "year_to": y_to,
+        "date_from": iso_from[:7] if iso_from else None,
+        "date_to": iso_to[:7] if iso_to else None,
         "message": empty_msg,
         "note": (
             "Ranked by topic match + citation impact + recency. "
-            "Crossref is always free. Semantic Scholar works lightly without a key. "
-            "OpenAlex may need a free API key in Settings."
-            + year_note
+            "Crossref/OpenAlex honor month-level dates; Semantic Scholar + Google Scholar "
+            "filter by year. Google Scholar needs a SerpAPI key in Settings."
+            + range_note
         ),
     }
 

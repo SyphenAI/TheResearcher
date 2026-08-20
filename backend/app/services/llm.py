@@ -51,8 +51,8 @@ PROVIDER_DEFAULTS = {
     "xai": {
         "base_url": "https://api.x.ai/v1",
         "chat_path": "/chat/completions",
-        "default_model": "grok-2-latest",
-        "model_fallbacks": ["grok-2-latest", "grok-3-mini", "grok-3"],
+        "default_model": "grok-4.6",
+        "model_fallbacks": ["grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1"],
         "style": "openai",
     },
     "google": {
@@ -93,6 +93,20 @@ def _discover_anthropic_models(api_key: str, base_url: str) -> list[str]:
         return []
 
 
+# Known-retired provider model IDs. Prefer current defaults instead of failing first.
+_RETIRED_MODELS = {
+    "xai": {
+        "grok-2-latest",
+        "grok-2",
+        "grok-2-1212",
+        "grok-3",
+        "grok-3-mini",
+        "grok-3-fast",
+        "grok-3-mini-fast",
+    },
+}
+
+
 def _model_candidates(
     meta: dict[str, Any],
     preferred: str | None = None,
@@ -100,9 +114,17 @@ def _model_candidates(
     api_key: str | None = None,
     provider: str | None = None,
 ) -> list[str]:
+    """Build try-order for live calls.
+
+    Note: desk \"Auto\" means \"use token preferred model, else app default\" — it does
+    not call the provider to discover the newest alias. Keep defaults current.
+    """
+    retired = _RETIRED_MODELS.get((provider or "").lower(), set())
     models: list[str] = []
-    if preferred:
-        models.append(preferred)
+    pref = (preferred or "").strip()
+    # If the saved preferred model was retired, skip it so Auto/default wins.
+    if pref and pref.lower() not in retired:
+        models.append(pref)
     models.append(meta.get("default_model") or "")
     models.extend(meta.get("model_fallbacks") or [])
     if provider == "anthropic" and api_key:
@@ -112,6 +134,8 @@ def _model_candidates(
     for model in models:
         name = (model or "").strip()
         if not name or name in seen:
+            continue
+        if name.lower() in retired:
             continue
         seen.add(name)
         out.append(name)

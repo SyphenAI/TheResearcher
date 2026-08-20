@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog
+from app.services.timefmt import to_iso_utc
 
 # Keep only a small rolling window of security events.
 MAX_AUDIT_ROWS = 50
@@ -76,7 +77,7 @@ def serialize_audit_row(row: AuditLog) -> dict:
         "action": row.action,
         "action_label": humanize_action(row.action),
         "detail": row.detail,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": to_iso_utc(row.created_at),
     }
 
 

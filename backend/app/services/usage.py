@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import LlmUsageEvent
+from app.services.timefmt import to_iso_utc
 
 # Rough list prices USD per 1M tokens (input, output). Update as markets move.
 # Prefer family matches over exact IDs.
@@ -22,6 +23,11 @@ _RATE_TABLE: list[tuple[str, float, float]] = [
     ("gpt-4o", 2.50, 10.0),
     ("o3", 2.0, 8.0),
     ("o1", 15.0, 60.0),
+    ("grok-4.6", 2.0, 6.0),
+    ("grok-4.5", 2.0, 6.0),
+    ("grok-4.3", 1.25, 2.50),
+    ("grok-build", 1.0, 2.0),
+    ("grok-4", 2.0, 6.0),
     ("grok-3-mini", 0.30, 0.50),
     ("grok-3", 3.0, 15.0),
     ("grok-2", 2.0, 10.0),
@@ -213,7 +219,7 @@ def usage_summary(db: Session, *, days: int = 30, limit: int = 50) -> dict[str, 
                 "estimated_cost_usd": e.estimated_cost_usd,
                 "latency_ms": e.latency_ms,
                 "ok": e.ok,
-                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "created_at": to_iso_utc(e.created_at),
             }
             for e in recent
         ],

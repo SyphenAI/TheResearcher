@@ -324,9 +324,15 @@ def tool_scholar_search(
     limit: int = 12,
     year_from: int | None = None,
     year_to: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> Any:
-    """World scholar search (Crossref + Semantic Scholar + OpenAlex)."""
+    """World scholar search (Crossref + Semantic Scholar + OpenAlex + Google Scholar via SerpAPI)."""
     params: dict[str, str] = {"q": q, "limit": str(max(1, min(int(limit), 25)))}
+    if date_from:
+        params["date_from"] = str(date_from)
+    if date_to:
+        params["date_to"] = str(date_to)
     if year_from is not None:
         params["year_from"] = str(int(year_from))
     if year_to is not None:
@@ -575,9 +581,20 @@ def run_fastmcp() -> None:
         limit: int = 12,
         year_from: int | None = None,
         year_to: int | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> str:
-        """Search scholarly papers; optional year_from/year_to."""
-        return _as_json_text(tool_scholar_search(q, limit, year_from, year_to))
+        """Search scholarly papers; optional date_from/date_to (YYYY-MM) or year_from/year_to."""
+        return _as_json_text(
+            tool_scholar_search(
+                q,
+                limit,
+                year_from,
+                year_to,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        )
 
     @mcp.tool()
     def add_citation(

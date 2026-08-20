@@ -174,10 +174,13 @@ class Artifact(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
-    filename: Mapped[str] = mapped_column(String(255))
+    # kind: file (uploaded) | url (saved reference link)
+    kind: Mapped[str] = mapped_column(String(16), default="file")
+    filename: Mapped[str] = mapped_column(String(255), default="")
     original_name: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    source_url: Mapped[str] = mapped_column(String(1024), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

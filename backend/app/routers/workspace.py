@@ -316,11 +316,13 @@ def scholar_search(
     limit: int = 12,
     year_from: int | None = None,
     year_to: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     _: User = Depends(get_current_user),
 ) -> dict:
-    """Find scholarly articles for a research topic (Crossref + Semantic Scholar + OpenAlex).
+    """Find scholarly articles (Crossref + Semantic Scholar + OpenAlex + Google Scholar via SerpAPI).
 
-    Optional year_from / year_to filter by publication year (inclusive).
+    Optional date_from / date_to (YYYY, YYYY-MM, or YYYY-MM-DD). year_from / year_to still work.
     """
     from app.services.app_settings import load_app_settings
     from app.services.scholar_search import search_scholar
@@ -331,8 +333,11 @@ def scholar_search(
         limit=limit,
         year_from=year_from,
         year_to=year_to,
+        date_from=date_from,
+        date_to=date_to,
         semantic_scholar_key=(rules.get("semantic_scholar_api_key") or "").strip() or None,
         openalex_key=(rules.get("openalex_api_key") or "").strip() or None,
+        serpapi_key=(rules.get("serpapi_api_key") or "").strip() or None,
     )
 
 

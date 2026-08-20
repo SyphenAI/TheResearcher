@@ -44,7 +44,7 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 | P05 | Gartner-style / domain research templates | partial | Template store + domain scaffolds; **Analyst Insights note (ITRBP)** pack for writing exercise structure |
 | P05b | Paper-area MD → Word download | completed | Download Word (section) + full paper; `as_draft` skips publish gate; improved export_docx tables/code |
 | P06 | Peer review workflow | partial | Peer review list/add on desk; not multi-user collab |
-| P07 | Citation manager + scholar search | completed | APA-style fields; Crossref + Semantic Scholar + OpenAlex; year_from/year_to filters |
+| P07 | Citation manager + scholar search | completed | APA-style fields; Crossref + Semantic Scholar + OpenAlex + Google Scholar (SerpAPI); year_from/year_to filters |
 | P08 | MFA for local accounts | not started | Password auth only |
 | P09 | Collaborative simultaneous editing | not started | Single-user local edits |
 | P10 | MCP bridge for host agents | partial | Expanded tools + FastMCP when `pip install -r requirements-mcp.txt`; stdlib NDJSON fallback. Not every desk endpoint yet. |
@@ -106,7 +106,7 @@ Use this file to resume work. Status values: `not started` | `in progress` | `co
 
 - Scaffolded Dockerized FastAPI + React research desk; auth, projects, security tokens
 - Live multi-agent Research Assistant, judge panel, local/live humanize, AI Checker quick + live
-- Scholar search (desk + global), year filters, research radar, summarize, FTS search
+- Scholar search (desk + global; Crossref/S2/OpenAlex + Google Scholar via SerpAPI), year filters, research radar, summarize, FTS search
 - Evidence + publish gate, diagrams, backups, usage/cost alert, section versions, autosave
 - Desk polish: thinking banner, refresh desk / AI check section, contribution resync, tasks complete/edit/delete
 - Code reference comments on reasoning path; MCP server docstring expanded

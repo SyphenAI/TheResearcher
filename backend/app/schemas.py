@@ -161,14 +161,22 @@ class TaskOut(BaseModel):
 class ArtifactOut(BaseModel):
     id: int
     project_id: int
-    filename: str
+    kind: str = "file"
+    filename: str = ""
     original_name: str
     content_type: str
-    size_bytes: int
-    notes: str
+    size_bytes: int = 0
+    source_url: str = ""
+    notes: str = ""
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ArtifactUrlCreate(BaseModel):
+    url: str
+    title: str = ""
+    notes: str = ""
 
 
 class TokenCreate(BaseModel):
@@ -243,6 +251,8 @@ class AssistantResponse(BaseModel):
     used_live: bool = False
     critique: str = ""
     red_team: str = ""
+    # URLs detected in the research prompt and fetch outcomes
+    source_urls: dict[str, Any] = {}
 
 
 class ApplyAssistantRequest(BaseModel):
@@ -358,6 +368,12 @@ class ExportRequest(BaseModel):
 class SpellcheckRequest(BaseModel):
     text: str = ""
     max_issues: int = 80
+
+
+class StyleFixRequest(BaseModel):
+    """Mechanical AI-check style fix (dashes/semicolons). Preview before accept."""
+
+    text: str = ""
 
 
 class HealthOut(BaseModel):

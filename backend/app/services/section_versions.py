@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app.models import SectionVersion
+from app.services.timefmt import to_iso_utc
 
 MAX_VERSIONS_PER_SECTION = 12
 
@@ -88,5 +89,5 @@ def version_to_dict(row: SectionVersion) -> dict:
         "char_count": row.char_count,
         "snippet": snippet,
         "created_by": row.created_by,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": to_iso_utc(row.created_at),
     }

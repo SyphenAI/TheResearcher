@@ -1,14 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
+import { formatLocalDateTime } from "../utils/datetime";
 
 function formatWhen(value) {
   if (!value) return "—";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return String(value);
-  }
+  return formatLocalDateTime(value) || "—";
 }
 
 export default function HomeDashboardPage() {
@@ -453,7 +450,7 @@ export default function HomeDashboardPage() {
         <p className="muted" style={{ margin: 0 }}>
           {feed?.message || ""}
           {feed?.generated_at
-            ? ` · Updated ${new Date(feed.generated_at).toLocaleString()}`
+            ? ` · Updated ${formatLocalDateTime(feed.generated_at)}`
             : ""}
           {feed?.cached
             ? ` · cached (~${feed.cache_ttl_sec || "?"}s left)`

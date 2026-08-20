@@ -33,6 +33,8 @@ class AppSettingsOut(BaseModel):
     humanize_before_export_hint: bool = True
     semantic_scholar_api_key: str = ""
     openalex_api_key: str = ""
+    serpapi_api_key: str = ""
+    jina_api_key: str = ""
     follow_topics: list[str] = Field(default_factory=list)
     daily_cost_alert_usd: float = 2.0
 
@@ -49,6 +51,8 @@ class AppSettingsUpdate(BaseModel):
     humanize_before_export_hint: bool | None = None
     semantic_scholar_api_key: str | None = None
     openalex_api_key: str | None = None
+    serpapi_api_key: str | None = None
+    jina_api_key: str | None = None
     follow_topics: list[str] | None = None
     daily_cost_alert_usd: float | None = Field(default=None, ge=0, le=1000)
 

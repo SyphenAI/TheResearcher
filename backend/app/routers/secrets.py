@@ -48,7 +48,7 @@ SUGGESTED_MODELS = {
         "claude-sonnet-5",
         "claude-opus-4-5-20251101",
     ],
-    "xai": ["grok-2-latest", "grok-3-mini", "grok-3"],
+    "xai": ["grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1"],
     "google": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
     "azure_openai": ["gpt-4o-mini"],
     "custom": [],

@@ -34,11 +34,92 @@ BANNED_PHRASES = [
 
 BANNED_DASH_PATTERN = re.compile(r"(--|\u2014|\u2013)")
 SEMICOLON_PATTERN = re.compile(r";")
+# En/em dash between digits (date/number ranges) — keep as ASCII hyphen, not comma.
+RANGE_DASH_PATTERN = re.compile(r"(\d)\s*[\u2013\u2014]\s*(\d)")
+
+
+def fix_ai_style_tells(text: str) -> dict[str, Any]:
+    """Mechanical style fix for AI-check tells (preview/accept on desk).
+
+    - Digit ranges with en/em dash → ASCII hyphen (1–30 → 1-30)
+    - Remaining em/en dashes and -- → comma
+    - Semicolons → periods
+    Does not strip stock phrases or invent contractions. Preserves markdown HRs.
+    """
+    original = text or ""
+    out = original
+    ops: list[str] = []
+
+    # Preserve markdown thematic breaks while fixing double hyphens in prose.
+    hr_slots: dict[str, str] = {}
+
+    def _park_hr(match: re.Match[str]) -> str:
+        key = f"\0HR{len(hr_slots)}\0"
+        hr_slots[key] = match.group(0)
+        return key
+
+    out = re.sub(r"(?m)^\s*-{3,}\s*$", _park_hr, out)
+
+    out, n_range = RANGE_DASH_PATTERN.subn(r"\1-\2", out)
+    if n_range:
+        ops.append(f"Converted {n_range} number/date range dash(es) to hyphen (e.g. 1-30).")
+
+    out, n_dd = re.subn(r"-{2,}", ", ", out)
+    out, n_em = re.subn(r"[\u2014\u2013]", ", ", out)
+    prose_dashes = n_dd + n_em
+    if prose_dashes:
+        ops.append(f"Replaced {prose_dashes} em/en/double-hyphen dash(es) with commas.")
+
+    for key, val in hr_slots.items():
+        out = out.replace(key, val)
+
+    def _semi_to_period(match: re.Match[str]) -> str:
+        rest = match.group(1)
+        if rest and rest[0].islower():
+            rest = rest[0].upper() + rest[1:]
+        return f". {rest}"
+
+    out, n_semi = re.subn(r";\s*(\S)", _semi_to_period, out)
+    # Any leftover bare semicolons
+    if ";" in out:
+        leftovers = out.count(";")
+        out = out.replace(";", ".")
+        n_semi += leftovers
+    if n_semi:
+        ops.append(f"Replaced {n_semi} semicolon(s) with periods.")
+
+    # Light cleanup without smashing markdown newlines.
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r" +\.", ".", out)
+    out = re.sub(r" +,", ",", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+
+    before = score_ai_likelihood(original)
+    after = score_ai_likelihood(out)
+    return {
+        "original": original,
+        "proposed": out,
+        "changed": out != original,
+        "ops": ops,
+        "before": {
+            "ai_pct": before.get("ai_pct"),
+            "human_pct": before.get("human_pct"),
+            "signals": before.get("signals") or {},
+        },
+        "after": {
+            "ai_pct": after.get("ai_pct"),
+            "human_pct": after.get("human_pct"),
+            "signals": after.get("signals") or {},
+        },
+    }
 
 
 def strip_banned_style(text: str) -> str:
     """Remove em dashes, double hyphens, semicolons, and stock AI phrases."""
-    cleaned = BANNED_DASH_PATTERN.sub(", ", text)
+    # Keep date/number ranges readable (1–30 → 1-30) before comma substitution.
+    cleaned = RANGE_DASH_PATTERN.sub(r"\1-\2", text or "")
+    cleaned = BANNED_DASH_PATTERN.sub(", ", cleaned)
     cleaned = SEMICOLON_PATTERN.sub(". ", cleaned)
     for pattern in BANNED_PHRASES:
         cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
@@ -68,11 +149,13 @@ def humanize_text(text: str, strength: str = "medium") -> str:
     for pattern, repl in replacements:
         out = re.sub(pattern, repl, out, flags=re.IGNORECASE | re.MULTILINE)
 
-    if strength in {"medium", "high"}:
-        # Break long sentences occasionally by splitting on ", and "
+    # Sentence rewriting must not smash markdown structure (headers/bullets/newlines).
+    # Older logic joined on ". " and destroyed research-source-note formatting.
+    looks_markdown = bool(re.search(r"(?m)^#{1,6}\s+|^\s*[-*]\s+", out))
+    if strength in {"medium", "high"} and not looks_markdown:
         parts = re.split(r"(?<=\.)\s+", out)
         rebuilt: list[str] = []
-        for i, sentence in enumerate(parts):
+        for sentence in parts:
             sentence = sentence.strip()
             if not sentence:
                 continue
@@ -83,6 +166,27 @@ def humanize_text(text: str, strength: str = "medium") -> str:
             else:
                 rebuilt.append(sentence)
         out = " ".join(rebuilt)
+    elif strength == "high" and looks_markdown:
+        # Only split very long prose lines; keep line breaks and list/header lines intact.
+        lines_out: list[str] = []
+        for line in out.split("\n"):
+            raw = line
+            stripped = line.strip()
+            if (
+                not stripped
+                or re.match(r"^#{1,6}\s+", stripped)
+                or re.match(r"^[-*]\s+", stripped)
+                or re.match(r"^\d+\.\s+", stripped)
+                or len(stripped) <= 160
+                or ", and " not in stripped
+            ):
+                lines_out.append(raw)
+                continue
+            left, right = stripped.split(", and ", 1)
+            indent = re.match(r"^\s*", raw).group(0) if re.match(r"^\s*", raw) else ""
+            lines_out.append(indent + left.rstrip(",") + ".")
+            lines_out.append(indent + (right[0].upper() + right[1:] if right else right))
+        out = "\n".join(lines_out)
 
     # Prefer contractions for common patterns
     contraction_map = [
@@ -119,22 +223,25 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
             "recommendations": ["Paste content to evaluate."],
         }
 
-    words = re.findall(r"[A-Za-z']+", text)
+    # Ignore markdown thematic breaks so "---" section joiners / HRs are not scored as AI dashes.
+    prose = re.sub(r"(?m)^\s*-{3,}\s*$", "", text)
+
+    words = re.findall(r"[A-Za-z']+", prose)
     word_count = max(len(words), 1)
-    sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+    sentences = [s.strip() for s in re.split(r"[.!?]+", prose) if s.strip()]
     sentence_count = max(len(sentences), 1)
     avg_sentence_len = word_count / sentence_count
 
     banned_hits = 0
     for pattern in BANNED_PHRASES:
-        banned_hits += len(re.findall(pattern, text, flags=re.IGNORECASE))
+        banned_hits += len(re.findall(pattern, prose, flags=re.IGNORECASE))
 
-    dash_hits = len(BANNED_DASH_PATTERN.findall(text))
-    semicolon_hits = len(SEMICOLON_PATTERN.findall(text))
-    passive_hits = len(re.findall(r"\b(is|are|was|were|be|been|being)\s+\w+ed\b", text, re.I))
-    contraction_hits = len(re.findall(r"\b\w+n't\b|\bit's\b|\byou're\b|\bwe're\b|\bthey're\b", text, re.I))
+    dash_hits = len(BANNED_DASH_PATTERN.findall(prose))
+    semicolon_hits = len(SEMICOLON_PATTERN.findall(prose))
+    passive_hits = len(re.findall(r"\b(is|are|was|were|be|been|being)\s+\w+ed\b", prose, re.I))
+    contraction_hits = len(re.findall(r"\b\w+n't\b|\bit's\b|\byou're\b|\bwe're\b|\bthey're\b", prose, re.I))
     unique_ratio = len(set(w.lower() for w in words)) / word_count
-    bullets = re.findall(r"^\s*[-*]\s+.+$", text, flags=re.MULTILINE)
+    bullets = re.findall(r"^\s*[-*]\s+.+$", prose, flags=re.MULTILINE)
 
     drivers: list[dict[str, Any]] = []
     why: list[str] = []
@@ -171,7 +278,12 @@ def score_ai_likelihood(text: str) -> dict[str, Any]:
     dash_pts = min(dash_hits * 5, 20)
     score += dash_pts
     if dash_hits:
-        _drive(dash_pts, "dashes", f"Found {dash_hits} em dash / double-hyphen hit(s).")
+        _drive(
+            dash_pts,
+            "dashes",
+            f"Found {dash_hits} en/em dash or double-hyphen hit(s) "
+            f"(markdown list '-' is fine; date ranges like 1–30 count).",
+        )
 
     semi_pts = min(semicolon_hits * 2, 8)
     score += semi_pts

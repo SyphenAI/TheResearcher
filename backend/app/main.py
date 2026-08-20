@@ -4,7 +4,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from datetime import datetime
+
 from fastapi import FastAPI
+from fastapi.encoders import ENCODERS_BY_TYPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,9 +18,13 @@ from app.routers import auth, health, projects, research, search, secrets, works
 from app.routers import settings as settings_router
 from app.services.migrate import ensure_schema
 from app.services.startup import ensure_seed_data, log_startup, run_self_check
+from app.services.timefmt import to_iso_utc
 
 logger = logging.getLogger("theresearcher")
 logging.basicConfig(level=logging.INFO)
+
+# SQLite often yields naive UTC datetimes — always emit Z so browsers show local time.
+ENCODERS_BY_TYPE[datetime] = to_iso_utc
 
 
 @asynccontextmanager

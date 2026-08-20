@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import PaperRelease, Project, ResearchSection
+from app.services.timefmt import to_iso_utc
 
 MAX_RELEASES = 80
 
@@ -262,7 +263,7 @@ def release_to_dict(row: PaperRelease, *, include_snapshot: bool = False) -> dic
         "char_count": row.char_count,
         "section_count": row.section_count,
         "created_by": row.created_by or "",
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": to_iso_utc(row.created_at),
     }
     if include_snapshot:
         sections, combined = snapshot_as_paper(row)

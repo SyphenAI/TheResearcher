@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { appendScholarDateParams, scholarDatePreset } from "../utils/scholarDates";
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -60,17 +61,9 @@ export default function SearchPage() {
   }
 
   function applyScholarYearPreset(preset) {
-    const now = new Date().getFullYear();
-    if (preset === "clear") {
-      setScholarYearFrom("");
-      setScholarYearTo("");
-      return;
-    }
-    const years = { "1y": 1, "3y": 3, "5y": 5, "10y": 10 }[preset];
-    if (years) {
-      setScholarYearFrom(String(now - years));
-      setScholarYearTo(String(now));
-    }
+    const { from, to } = scholarDatePreset(preset);
+    setScholarYearFrom(from);
+    setScholarYearTo(to);
   }
 
   async function runScholarSearch(term) {
@@ -84,25 +77,26 @@ export default function SearchPage() {
     setError("");
     setMessage("");
     try {
-      const params = new URLSearchParams({ q: query, limit: "15" });
-      const yf = String(scholarYearFrom || "").trim();
-      const yt = String(scholarYearTo || "").trim();
-      if (/^\d{4}$/.test(yf)) params.set("year_from", yf);
-      if (/^\d{4}$/.test(yt)) params.set("year_to", yt);
+      const params = appendScholarDateParams(
+        new URLSearchParams({ q: query, limit: "15" }),
+        scholarYearFrom,
+        scholarYearTo
+      );
       const res = await api(`/api/workspace/scholar/search?${params.toString()}`);
       setScholarHits(res.results || []);
       const yearBit =
-        res.year_from || res.year_to
-          ? ` · published ${res.year_from || "…"}–${res.year_to || "…"}`
+        res.date_from || res.date_to || res.year_from || res.year_to
+          ? ` · published ${res.date_from || res.year_from || "…"}–${res.date_to || res.year_to || "…"}`
           : "";
-      setMessage(
+      let msg =
         res.message ||
-          `Found ${res.total || 0} scholarly hit(s)` +
-            (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
-            yearBit +
-            ". Ranked by topic fit + citations + recency."
-      );
-      if (res.note) setMessage((m) => (m ? `${m} ${res.note}` : res.note));
+        `Found ${res.total || 0} scholarly hit(s)` +
+          (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
+          yearBit +
+          ". Ranked by topic fit + citations + recency.";
+      if (res.note) msg = `${msg} ${res.note}`;
+      if (res.source_errors?.length) msg = `${msg} ${res.source_errors.join(" · ")}`;
+      setMessage(msg);
       setParams({ q: query, tab: "scholar" });
     } catch (e) {
       setError(e.message || "Scholar search failed.");
@@ -318,7 +312,7 @@ export default function SearchPage() {
                 onChange={(e) => setQ(e.target.value)}
                 placeholder={
                   tab === "scholar"
-                    ? "e.g. exposure management prioritization exploitability"
+                    ? "e.g. cybersecurity exposure management prioritization (add domain words)"
                     : "e.g. residual risk, BAS, exposure ownership"
                 }
                 autoFocus
@@ -330,46 +324,49 @@ export default function SearchPage() {
           </div>
           {tab === "scholar" && (
             <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-              <label style={{ minWidth: 100 }}>
+              <label style={{ minWidth: 130 }}>
                 Published from
                 <input
-                  type="number"
-                  min={1990}
-                  max={2100}
-                  step={1}
-                  placeholder="YYYY"
+                  type="month"
                   value={scholarYearFrom}
                   onChange={(e) => setScholarYearFrom(e.target.value)}
                   disabled={busy}
+                  title="Earliest publication month (YYYY-MM)"
                 />
               </label>
-              <label style={{ minWidth: 100 }}>
+              <label style={{ minWidth: 130 }}>
                 Published to
                 <input
-                  type="number"
-                  min={1990}
-                  max={2100}
-                  step={1}
-                  placeholder="YYYY"
+                  type="month"
                   value={scholarYearTo}
                   onChange={(e) => setScholarYearTo(e.target.value)}
                   disabled={busy}
+                  title="Latest publication month (YYYY-MM)"
                 />
               </label>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("6m")}>
+                6 mo
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("ytd")}>
+                YTD
+              </button>
               <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("1y")}>
-                Last 1y
+                1y
+              </button>
+              <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("2y")}>
+                2y
               </button>
               <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("3y")}>
-                Last 3y
+                3y
               </button>
               <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("5y")}>
-                Last 5y
+                5y
               </button>
               <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("10y")}>
-                Last 10y
+                10y
               </button>
               <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("clear")}>
-                Any year
+                Any date
               </button>
             </div>
           )}
@@ -426,7 +423,8 @@ export default function SearchPage() {
             </label>
           </div>
           <p className="muted" style={{ margin: 0 }}>
-            Crossref + Semantic Scholar + OpenAlex. Ranked by topic fit, citations, and recency.
+            Crossref + Semantic Scholar + OpenAlex + Google Scholar (SerpAPI key in Settings).
+            Month-level dates (Crossref/OpenAlex exact; S2/Google Scholar by year). Add domain words to stay on-topic.
           </p>
           {!scholarHits.length && <p className="muted">No scholarly hits yet.</p>}
           {scholarHits.map((hit, idx) => (

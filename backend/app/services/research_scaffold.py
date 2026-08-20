@@ -129,9 +129,340 @@ def buyer_questions_md(domain: str) -> str:
     return f"### Buyer and leadership questions\n{lines}\n"
 
 
+def has_linked_sources(context_md: str = "") -> bool:
+    return "Linked sources (fetched from Research prompt URLs)" in (context_md or "")
+
+
+def wants_deep_framing(prompt: str, context_md: str = "") -> bool:
+    """Expand ATT&CK / program framing when the ask is technical, not a thin news brief.
+
+    Explicit triggers: 'full framing', 'with ATT&CK', 'attack path', etc.
+    Also expands for offensive/vuln-heavy prompts. Pure vendor-acquisition news stays short
+    unless the user asks for depth.
+    """
+    text = f"{prompt}\n{context_md}".lower()
+    if re.search(
+        r"\b(full framing|with att&ck|with mitre|attack path|threat framing|"
+        r"deep dive|full analysis|include stride)\b",
+        text,
+    ):
+        return True
+    # Vendor/news-heavy → prefer short unless user forced depth above.
+    news_hits = len(
+        re.findall(
+            r"\b(acquire|acquired|acquires|acquiring|acquisition|merger|merge|bookings|"
+            r"magic quadrant|press release|customers?(?:\s+across)?|yo[uy] growth|"
+            r"asp|arr|funding|vendor)\b",
+            text,
+        )
+    )
+    tech_hits = len(
+        re.findall(
+            r"\b(attack path|att&ck|t1\d{3}|lateral|exploit|control validation|"
+            r"bas\b|aev\b|remediat|retest|ctem loop|exposure priorit)\b",
+            text,
+        )
+    )
+    # Merger/news articles stay on the short research-paper note unless the user
+    # explicitly asks for depth (even if the press copy mentions CTEM/exposure).
+    if news_hits >= 1 and not re.search(
+        r"\b(full framing|with att&ck|with mitre|attack path|threat framing|"
+        r"deep dive|full analysis|include stride)\b",
+        text,
+    ):
+        return False
+    if news_hits >= 2 and tech_hits == 0:
+        return False
+    domain = detect_domain(prompt, context_md)
+    if domain in {"offensive", "vuln"}:
+        return True
+    if domain == "exposure" and tech_hits > 0:
+        return True
+    return tech_hits >= 2
+
+
+def looks_unfilled_template(text: str) -> bool:
+    """True when a draft is still instructional placeholders, not analysis."""
+    body = text or ""
+    if len(body.strip()) < 80:
+        return True
+    markers = (
+        "_One sentence:",
+        "_3–5 factual",
+        "_Separate marketing",
+        "_What remains true",
+        "_Deal terms, integration",
+        "_Cite the linked source",
+        "Linked source material (do not paste raw)",
+        "Suggested section skeleton",
+        "Working outline",
+        "Draft response starter",
+    )
+    hits = sum(1 for m in markers if m in body)
+    italic_hints = len(re.findall(r"_[^_\n]{18,}_", body))
+    return hits >= 2 or italic_hints >= 3
+
+
+def looks_broken_brief_structure(text: str) -> bool:
+    """True when nested summary markdown leaked into the draft."""
+    body = text or ""
+    if body.count("## Summary") >= 2:
+        return True
+    # Headers embedded inside list items (e.g. "- ### Key points ...")
+    if re.search(r"(?m)^\s*[-*]\s+#{1,6}\s+", body):
+        return True
+    if re.search(r"(?m)^\s*[-*].{0,40}###\s+(Key points|Open questions|Analyst prompt)", body, re.I):
+        return True
+    # Nested heading crumbs mid-bullet
+    if re.search(r"(?m)^\s*[-*].*(##\s+Summary|###\s+Key points)", body):
+        return True
+    return False
+
+
+def _flatten_brief_body(text: str) -> str:
+    """Remove nested markdown headings from linked-brief bodies before extraction."""
+    from app.services.summarize import flatten_summary_to_bullets
+
+    bullets = flatten_summary_to_bullets(text or "", limit=12)
+    if bullets:
+        return " ".join(bullets)
+    cleaned = re.sub(r"(?m)^#{1,6}\s+.*$", " ", text or "")
+    cleaned = re.sub(r"[#*_`]+", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _extract_linked_blocks(context_md: str) -> list[dict[str, str]]:
+    """Parse linked-source brief blocks from assistant context."""
+    raw = context_md or ""
+    # Prefer the linked-sources section only (ignore section paper / operator notes).
+    if "## Linked sources (fetched from Research prompt URLs)" in raw:
+        raw = raw.split("## Linked sources (fetched from Research prompt URLs)", 1)[1]
+    if "## Operator instructions" in raw:
+        # Operator may appear before linked sources; already split above when possible.
+        pass
+    chunks = re.split(r"\n(?=### )", raw)
+    out: list[dict[str, str]] = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk.startswith("### "):
+            continue
+        lines = chunk.splitlines()
+        title = lines[0][4:].strip()
+        url = ""
+        body_lines: list[str] = []
+        for line in lines[1:]:
+            if line.lower().startswith("source:"):
+                url = line.split(":", 1)[1].strip()
+                continue
+            if line.lower().startswith("fetched via:"):
+                continue
+            body_lines.append(line)
+        body = "\n".join(body_lines).strip()
+        if title or body:
+            out.append({"title": title, "url": url, "body": body})
+    return out
+
+
+def _fact_bullets_from_text(text: str, *, limit: int = 5) -> list[str]:
+    """Extractive bullets; prefer sentences with numbers, names, or acquisition verbs."""
+    flat = _flatten_brief_body(text)
+    body = re.sub(r"\s+", " ", flat or "").strip()
+    if not body:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", body)
+    scored: list[tuple[float, int, str]] = []
+    for i, s in enumerate(parts[:60]):
+        s = s.strip(" -•\t")
+        s = re.sub(r"^#{1,6}\s+", "", s).strip()
+        if len(s) < 35 or len(s) > 280:
+            continue
+        if re.search(r"(?i)^(summary|key points|open questions|analyst prompt)\b", s):
+            continue
+        low = s.lower()
+        score = 0.0
+        if re.search(r"\d", s):
+            score += 2.0
+        if re.search(r"\b(acquir|merger|customer|gartner|ctem|exposure|plextrac|brinqa)\b", low):
+            score += 2.5
+        if re.search(r"\b(largest|growth|percent|%|million|billion)\b", low):
+            score += 1.5
+        if "http" in low or "source:" in low:
+            score -= 2.0
+        if "#" in s:
+            score -= 3.0
+        score += max(0.0, 1.5 - i * 0.03)
+        scored.append((score, i, s))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    picks = sorted(scored[:limit], key=lambda t: t[1])
+    return [p[2] for p in picks]
+
+
+def _press_figures(text: str) -> list[str]:
+    """Useful figures/claims from press copy, labeled as reported (not risk-scored)."""
+    flat = _flatten_brief_body(text)
+    lines: list[str] = []
+    for sent in re.split(r"(?<=[.!?])\s+", flat or ""):
+        s = sent.strip(" -•\t")
+        s = re.sub(r"^#{1,6}\s+", "", s).strip()
+        if len(s) < 25 or len(s) > 260 or "#" in s:
+            continue
+        low = s.lower()
+        if re.search(
+            r"\b(largest|leading|%\b|percent|customers|fortune|countries|bookings|"
+            r"asp|arr|magic quadrant|closes the ctem|acquir|merger)\b",
+            low,
+        ):
+            lines.append(f"- Reported in source: {s}")
+        if len(lines) >= 5:
+            break
+    if not lines:
+        lines.append("- No standout figures auto-extracted; pull quotes/numbers manually from the article.")
+    return lines
+
+
+def _em_implications(text: str, title: str = "") -> str:
+    """How a merger/news item could change exposure-management practice (for paper writing)."""
+    low = f"{title}\n{text}".lower()
+    bits: list[str] = []
+    if re.search(r"\b(acquir|merger|plextrac|brinqa|validation|pentest|ctem)\b", low):
+        bits.append(
+            "If prioritization/aggregation platforms absorb validation or pentest-reporting tools, "
+            "buyers may expect one workflow from exposure ranking through fix proof and retest, "
+            "instead of separate scanner, ASM, and assessment stacks."
+        )
+        bits.append(
+            "Program design pressure shifts toward proving a finding can travel discover → prioritize → "
+            "validate/remediate → retest inside one operating model, not only sharing a dashboard."
+        )
+        bits.append(
+            "Consolidation can reduce tool sprawl, but it also raises questions about migration of "
+            "assessment data, role changes between VM/EM and offensive testing teams, and whether "
+            "'closed loop' messaging outruns real process change."
+        )
+    else:
+        bits.append(
+            "Use this article to show how market moves are reshaping the exposure-management operating "
+            "model buyers are sold, then contrast that narrative with how programs actually run today."
+        )
+    return "\n".join(f"- {b}" for b in bits)
+
+
+def build_linked_source_draft(
+    prompt: str,
+    context_md: str = "",
+    rewrite_human: bool = True,
+) -> dict[str, Any]:
+    """Research-paper source note from a linked article (optional deep framing).
+
+    Default is summary + implications for writing, not a risk-rating scorecard.
+    """
+    prompt = prompt.strip()
+    deep = wants_deep_framing(prompt, context_md)
+    domain = detect_domain(prompt, context_md)
+    blocks = _extract_linked_blocks(context_md)
+    primary = blocks[0] if blocks else {"title": "Linked source", "url": "", "body": ""}
+    combined = "\n\n".join((b.get("body") or "").strip() for b in blocks if (b.get("body") or "").strip())
+    if not combined.strip():
+        combined = context_md or ""
+
+    facts = _fact_bullets_from_text(combined, limit=6)
+    if not facts:
+        facts = [
+            "Linked source text was thin or unreadable. Paste the article body into the prompt and re-run."
+        ]
+    fact_md = "\n".join(f"- {f}" for f in facts)
+    figures_md = "\n".join(_press_figures(combined))
+    title = primary.get("title") or "Linked source"
+    url = primary.get("url") or ""
+    cite = f"[{title}]({url})" if url else title
+
+    # If the prompt is only the URL, don't echo it as the writing ask.
+    from app.services.summarize import URL_RE, extract_urls
+
+    writing_ask = prompt
+    urls_only = extract_urls(prompt)
+    remainder = " ".join(URL_RE.sub(" ", prompt).split())
+    if urls_only and len(remainder) < 8:
+        writing_ask = (
+            "Summarize this article for use in an exposure-management / CTEM research paper, "
+            "including how the move could change how buyers run programs."
+        )
+
+    why = (
+        f"This {cite} note is useful as a market-move citation in an exposure-management / CTEM paper: "
+        f"it shows vendors packaging prioritization with validation/reporting as one 'closed loop' story. "
+        f"Use it to discuss how buyers may be pushed to rethink tool boundaries, not as proof the loop is closed."
+    )
+    implications = _em_implications(combined, title)
+    use_in_paper = (
+        "- Cite the article for the **announced combination of capabilities** and the market narrative "
+        "around unified exposure management.\n"
+        "- Keep press metrics and 'largest / closes the loop' lines attributed to the article or vendor, "
+        "not as independent market fact.\n"
+        "- Pair this source with a second reference (analyst note, filing, or customer case) before leaning "
+        "on size or outcome claims in the final paper."
+    )
+    paper_questions = (
+        "- What publication/announcement date should be cited?\n"
+        "- Which capabilities does each party bring to discover, prioritize, validate, remediate, and retest?\n"
+        "- How might EM/VM teams and offensive/validation teams reorganize after this kind of merger?\n"
+        "- What would a buyer need to see in a live workflow before accepting 'CTEM loop closed' language?"
+    )
+
+    parts = [
+        "## Research source note\n\n",
+        f"**Writing ask:** {writing_ask}\n\n" if writing_ask else "",
+        "### Why this source matters for the paper\n",
+        f"{why}\n\n",
+        "### Article synopsis\n",
+        f"{fact_md}\n\n",
+        "### Figures and claims to handle carefully\n",
+        f"{figures_md}\n\n",
+        "### Implications for how people run exposure management\n",
+        f"{implications}\n\n",
+        "### How to use this in the draft\n",
+        f"{use_in_paper}\n\n",
+        "### Open questions for further research\n",
+        f"{paper_questions}\n\n",
+        "### Reference\n",
+        f"- {cite}\n",
+    ]
+    if deep:
+        parts.extend(
+            [
+                "\n### Extra framing (because you asked for depth)\n",
+                "- Tie the story to the CTEM stages you care about in the paper "
+                "(discover → prioritize → validate → remediate → retest).\n",
+                "- If attack-path content appears, name only the ATT&CK techniques the article "
+                "actually supports — no generic laundry lists.\n",
+                "- Note any buyer demo that would falsify 'loop closed' marketing "
+                "(one finding from priority through retest).\n\n",
+            ]
+        )
+
+    base = "".join(parts)
+    content = humanize_text(base) if rewrite_human else strip_banned_style(base)
+    citations = [{"title": title, "url": url}] if url else []
+    return {
+        "content": content,
+        "agent_chars": len(content),
+        "notes": (
+            "Local research-paper source note"
+            + (" with deep framing." if deep else " (summary + EM implications for writing).")
+        ),
+        "citations": citations,
+        "domain": domain,
+        "deep_framing": deep,
+    }
+
+
 def build_local_scaffold(prompt: str, context_md: str = "", rewrite_human: bool = True) -> dict[str, Any]:
     """Build offline draft dict: content, agent_chars, notes, citations."""
     prompt = prompt.strip()
+    # URL / linked-source runs get a short source brief, not the full empty scaffold.
+    if has_linked_sources(context_md):
+        return build_linked_source_draft(prompt, context_md, rewrite_human=rewrite_human)
+
     domain = detect_domain(prompt, context_md)
     refs = trusted_refs_snippet(1200)
     domain_block = _domain_block(domain, prompt)

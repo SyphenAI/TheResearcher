@@ -1,17 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api/client";
+import { api, getToken } from "../api/client";
 import { useAuth } from "../api/auth";
 import TextDiffPanes from "../components/TextDiffPanes";
+import { formatLocalDateTime } from "../utils/datetime";
+import { appendScholarDateParams, scholarDatePreset } from "../utils/scholarDates";
 
 /** Compact help control — hover/focus for tooltip, click toggles short panel. */
-function HelpIcon({ label = "Help", children }) {
+function HelpIcon({ label = "Help", mark = "?", wide = false, children }) {
   const [open, setOpen] = useState(false);
   return (
     <span className="help-icon-wrap">
       <button
         type="button"
-        className="help-icon"
+        className={`help-icon${mark !== "?" ? " help-pill" : ""}`}
         aria-label={label}
         title={typeof children === "string" ? children : label}
         onClick={(e) => {
@@ -20,10 +22,10 @@ function HelpIcon({ label = "Help", children }) {
           setOpen((v) => !v);
         }}
       >
-        ?
+        {mark}
       </button>
       {open && (
-        <span className="help-pop" role="note">
+        <span className={`help-pop${wide ? " help-pop-wide" : ""}`} role="note">
           {children}
           <button type="button" className="btn ghost" style={{ marginTop: "0.35rem" }} onClick={() => setOpen(false)}>
             Close
@@ -31,6 +33,109 @@ function HelpIcon({ label = "Help", children }) {
         </span>
       )}
     </span>
+  );
+}
+
+const MD_SNIPPETS = [
+  {
+    label: "# Title",
+    hint: "Main title / H1",
+    kind: "heading",
+    prefix: "# ",
+    placeholder: "Title",
+  },
+  {
+    label: "## Section",
+    hint: "Section heading / H2",
+    kind: "heading",
+    prefix: "## ",
+    placeholder: "Section",
+  },
+  {
+    label: "### Subsection",
+    hint: "Subheading / H3",
+    kind: "heading",
+    prefix: "### ",
+    placeholder: "Subsection",
+  },
+  { label: "**bold**", hint: "Bold", kind: "wrap", before: "**", after: "**", placeholder: "bold" },
+  { label: "*italic*", hint: "Italic", kind: "wrap", before: "*", after: "*", placeholder: "italic" },
+  {
+    label: "***bold italic***",
+    hint: "Bold + italic",
+    kind: "wrap",
+    before: "***",
+    after: "***",
+    placeholder: "bold italic",
+  },
+  { label: "`code`", hint: "Inline code / monospace", kind: "wrap", before: "`", after: "`", placeholder: "code" },
+  { label: "- item", hint: "Bullet list", kind: "line", text: "- item", select: "item" },
+  { label: "1. item", hint: "Numbered list", kind: "line", text: "1. item", select: "item" },
+  {
+    label: "[text](https://…)",
+    hint: "Link",
+    kind: "link",
+    placeholder: "text",
+    url: "https://example.com",
+  },
+  { label: "> quote", hint: "Block quote", kind: "line", text: "> quote", select: "quote" },
+  { label: "---", hint: "Horizontal rule", kind: "block", text: "\n---\n", select: null },
+];
+
+function MarkdownFormatHelp({ onInsert, canInsert = true }) {
+  return (
+    <div className="stack" style={{ gap: "0.45rem" }}>
+      <strong>Markdown for the paper editor</strong>
+      <div className="muted" style={{ fontSize: "0.8rem" }}>
+        {canInsert
+          ? "Click a row to paste it into the paper at the cursor (selected text gets wrapped when it fits)."
+          : "Type these in the paper window. Word download keeps headings, lists, and emphasis."}
+      </div>
+      <table className="md-help-table">
+        <tbody>
+          {MD_SNIPPETS.map((snip) => (
+            <tr key={snip.label}>
+              <td colSpan={2} style={{ padding: 0 }}>
+                <button
+                  type="button"
+                  className="md-help-insert"
+                  disabled={!canInsert || !onInsert}
+                  title={canInsert ? `Insert ${snip.label} into paper` : snip.hint}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (onInsert) onInsert(snip);
+                  }}
+                >
+                  <code>{snip.label}</code>
+                  <span>{snip.hint}</span>
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: "0.8rem" }}>
+        <strong>Paragraphs:</strong> blank line between blocks.
+        <br />
+        <strong>Line break:</strong> end a line with two spaces, then Enter.
+        <br />
+        <strong>Color:</strong> plain markdown has no text color — use headings/bold for emphasis, or note
+        color only in Word after download.
+      </div>
+      <pre className="md-help-sample">{`# Exposure management note
+
+## Summary
+Buyers need **fix proof**, not only discovery.
+
+### Recommendations
+1. Validate exploitability first
+2. Retest after remediation
+
+> Residual risk remains if ownership is unclear.
+
+See [MITRE ATT&CK](https://attack.mitre.org/).`}</pre>
+    </div>
   );
 }
 
@@ -115,6 +220,9 @@ export default function ResearchWorkspacePage() {
   const [humanizeDraft, setHumanizeDraft] = useState(null);
   /** One-level undo after Accept humanize */
   const [humanizeUndo, setHumanizeUndo] = useState(null);
+  /** AI-check style fix preview (dashes/semicolons) before Accept */
+  const [styleFixDraft, setStyleFixDraft] = useState(null);
+  const styleFixRef = useRef(null);
   const [saveState, setSaveState] = useState("saved"); // saved | saving | dirty | error
   const [saveToast, setSaveToast] = useState("");
   const [sectionVersions, setSectionVersions] = useState([]);
@@ -130,6 +238,9 @@ export default function ResearchWorkspacePage() {
   /** Optional publication year range for scholar search (empty = any year). */
   const [scholarYearFrom, setScholarYearFrom] = useState("");
   const [scholarYearTo, setScholarYearTo] = useState("");
+  const [artifactUrl, setArtifactUrl] = useState("");
+  const [artifactUrlTitle, setArtifactUrlTitle] = useState("");
+  const [artifactUrlNote, setArtifactUrlNote] = useState("");
   const [liveModelOptions, setLiveModelOptions] = useState([
     { id: "auto", label: "Auto (token preferred / fallback)", provider: null, model: null },
   ]);
@@ -312,6 +423,12 @@ export default function ResearchWorkspacePage() {
   }, [humanizeDraft]);
 
   useEffect(() => {
+    if (styleFixDraft && styleFixRef.current) {
+      styleFixRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [styleFixDraft]);
+
+  useEffect(() => {
     if (assistantOut && assistantRef.current) {
       assistantRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
@@ -355,7 +472,7 @@ export default function ResearchWorkspacePage() {
     }
     try {
       const res = await api(
-        `/api/projects/${project.id}/sections/${sectionId}/versions?limit=12`
+        `/api/projects/${project.id}/sections/${sectionId}/versions?limit=20`
       );
       setSectionVersions(res.versions || []);
     } catch {
@@ -554,10 +671,13 @@ export default function ResearchWorkspacePage() {
       setError("Enter a research prompt for this section first.");
       return;
     }
-    beginBusy("Research Assistant (multi-agent)");
+    const hasUrl = /https?:\/\/\S+/i.test(prompt);
+    beginBusy(hasUrl ? "Research Assistant (fetching URLs…)" : "Research Assistant (multi-agent)");
     setError("");
     setMessage(
-      "Research Assistant is running. Multi-agent panel often takes 1–3 minutes; draft appears under the buttons when ready."
+      hasUrl
+        ? "Fetching linked URL(s) from the prompt, then running the multi-agent panel. Often 1–3 minutes."
+        : "Research Assistant is running. Multi-agent panel often takes 1–3 minutes; draft appears under the buttons when ready."
     );
     try {
       if (activeSection) {
@@ -580,11 +700,23 @@ export default function ResearchWorkspacePage() {
       setAssistantOut(result.content);
       setCritique(result.critique || "");
       setRedTeam(result.red_team || "");
-      setMessage(
-        `${result.notes || "Assistant ready."}${
-          result.used_live ? " (live providers)" : " (local scaffold)"
-        } Review the draft below, then Apply to paper.`
-      );
+      const src = result.source_urls || {};
+      const failed = Array.isArray(src.failed) ? src.failed : [];
+      const ok = Array.isArray(src.ok) ? src.ok : [];
+      let msg = `${result.notes || "Assistant ready."}${
+        result.used_live ? " (live providers)" : " (local scaffold)"
+      } Review the draft below, then Apply to paper.`;
+      if (ok.length) {
+        msg += ` Linked sources ingested: ${ok.map((s) => s.title || s.url).join("; ")}.`;
+      }
+      setMessage(msg);
+      if (failed.length) {
+        setError(
+          failed
+            .map((f) => `${f.url}: ${f.error || "fetch failed"}`)
+            .join(" · ")
+        );
+      }
       await loadProject();
       await loadProjectDetails();
     } catch (e) {
@@ -733,11 +865,145 @@ export default function ResearchWorkspacePage() {
     });
   }
 
-  function dismissAssistantDraft() {
+  async function runStyleFixFromAiCheck() {
+    if (isReviewer) return;
+    const scope = aiCheckPanel?.scope === "paper" ? "paper" : "section";
+    beginBusy(scope === "paper" ? "Style fix (full paper)" : "Style fix (section)");
+    setError("");
+    setMessage(
+      scope === "paper"
+        ? "Building smart style-fix preview across sections…"
+        : "Building smart style-fix preview for this section…"
+    );
+    try {
+      const targets =
+        scope === "paper"
+          ? (sections || []).filter((s) => (s.content_md || "").trim())
+          : activeSection
+            ? [activeSection]
+            : [];
+      if (!targets.length) {
+        setError("Nothing to fix — paper/section is empty.");
+        return;
+      }
+      const items = [];
+      const allOps = [];
+      for (const sec of targets) {
+        const original = sec.content_md || "";
+        const res = await api("/api/research/style-fix", {
+          method: "POST",
+          body: JSON.stringify({ text: original }),
+        });
+        if (res.changed) {
+          items.push({
+            sectionId: sec.id,
+            title: sec.title || "Section",
+            original,
+            proposed: res.proposed || original,
+            ops: res.ops || [],
+            before: res.before || {},
+            after: res.after || {},
+          });
+          (res.ops || []).forEach((op) => allOps.push(`${sec.title || "Section"}: ${op}`));
+        }
+      }
+      if (!items.length) {
+        setMessage("No dash/semicolon style tells to fix in this scope.");
+        setStyleFixDraft(null);
+        return;
+      }
+      // Score the joined changed text via style-fix (does not write AI-check history).
+      const joinedOriginal = items.map((i) => i.original).join("\n\n");
+      const joinedScore = await api("/api/research/style-fix", {
+        method: "POST",
+        body: JSON.stringify({ text: joinedOriginal }),
+      });
+      setStyleFixDraft({
+        scope,
+        items,
+        previewIndex: 0,
+        ops: allOps,
+        before: {
+          ai_pct: joinedScore.before?.ai_pct,
+          human_pct: joinedScore.before?.human_pct,
+        },
+        after: {
+          ai_pct: joinedScore.after?.ai_pct,
+          human_pct: joinedScore.after?.human_pct,
+        },
+      });
+      setRightTab("paper");
+      setMessage(
+        `Style fix ready: ${items.length} section(s) changed. Review the diff, then Accept.`
+      );
+    } catch (e) {
+      setError(e.message || "Style fix failed.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function acceptStyleFix() {
+    if (!styleFixDraft?.items?.length || !activeId) return;
+    const count = styleFixDraft.items.length;
+    beginBusy("Applying style fix");
+    setError("");
+    try {
+      for (const item of styleFixDraft.items) {
+        const updated = await api(`/api/projects/${activeId}/sections/${item.sectionId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ content_md: item.proposed }),
+        });
+        setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      }
+      setStyleFixDraft(null);
+      setSaveState("saved");
+      setMessage(`Applied style fix to ${count} section(s). Re-run AI check to confirm.`);
+      await loadProjectDetails();
+      await loadSectionVersions();
+    } catch (e) {
+      setError(e.message || "Could not apply style fix.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  function rejectStyleFix() {
+    setStyleFixDraft(null);
+    setMessage("Style fix discarded. Paper unchanged.");
+  }
+
+  function clearAssistantOutputs() {
     setAssistantOut("");
     setCritique("");
     setRedTeam("");
-    setMessage("Assistant draft dismissed. Nothing was written to the paper.");
+    setError("");
+    setMessage("Cleared Assistant draft, Critic, and Red team. Paper and prompt unchanged.");
+  }
+
+  async function clearResearchPrompt() {
+    if (!project || !activeSection) {
+      setPrompt("");
+      return;
+    }
+    setPrompt("");
+    setError("");
+    beginBusy("Clearing research prompt");
+    try {
+      const updated = await api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          content_md: activeSection.content_md || "",
+          prompt: "",
+        }),
+      });
+      setSections((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setMessage("Research prompt cleared (saved on this section).");
+    } catch (e) {
+      setError(e.message || "Could not clear prompt.");
+    } finally {
+      endBusy();
+    }
   }
 
   async function undoHumanizeAccept() {
@@ -888,7 +1154,8 @@ export default function ResearchWorkspacePage() {
       setError("Full paper is empty — nothing to AI-check.");
       return null;
     }
-    const text = parts.join("\n\n---\n\n");
+    // Join with blank lines only — "---" separators match the dash heuristic and falsely inflate AI %.
+    const text = parts.join("\n\n");
     const result = await api("/api/research/ai-check", {
       method: "POST",
       body: JSON.stringify({
@@ -1101,6 +1368,77 @@ export default function ResearchWorkspacePage() {
     setFindText(sel);
     setError("");
     setMessage(`Find set to “${sel}”. Type a replacement and Replace.`);
+  }
+
+  function insertMarkdownSnippet(snip) {
+    if (isReviewer || !activeSection || !snip) return;
+    const el = paperEditorRef.current;
+    const text = activeSection.content_md || "";
+    const start = el ? el.selectionStart : text.length;
+    const end = el ? el.selectionEnd : text.length;
+    const selected = text.slice(start, end);
+    const beforeChar = start > 0 ? text[start - 1] : "\n";
+    const needsLeadingNl = beforeChar && beforeChar !== "\n";
+
+    let insert = "";
+    let selFrom = 0;
+    let selTo = 0;
+
+    if (snip.kind === "wrap") {
+      const inner = selected || snip.placeholder || "text";
+      insert = `${snip.before}${inner}${snip.after}`;
+      selFrom = start + snip.before.length;
+      selTo = selFrom + inner.length;
+    } else if (snip.kind === "heading") {
+      const inner = selected || snip.placeholder || "Heading";
+      const lead = needsLeadingNl ? "\n\n" : start === 0 ? "" : "\n";
+      insert = `${lead}${snip.prefix}${inner}\n\n`;
+      selFrom = start + lead.length + snip.prefix.length;
+      selTo = selFrom + inner.length;
+    } else if (snip.kind === "link") {
+      const label = selected || snip.placeholder || "text";
+      const url = snip.url || "https://example.com";
+      insert = `[${label}](${url})`;
+      if (selected) {
+        selFrom = start + 1;
+        selTo = start + 1 + label.length;
+      } else {
+        selFrom = start + 1;
+        selTo = start + 1 + label.length;
+      }
+    } else if (snip.kind === "line") {
+      const lead = needsLeadingNl ? "\n" : "";
+      insert = `${lead}${snip.text}\n`;
+      if (snip.select) {
+        const idx = insert.indexOf(snip.select);
+        selFrom = start + idx;
+        selTo = selFrom + snip.select.length;
+      } else {
+        selFrom = selTo = start + insert.length;
+      }
+    } else if (snip.kind === "block") {
+      const lead = needsLeadingNl ? "\n" : "";
+      insert = `${lead}${snip.text}`;
+      if (!insert.endsWith("\n")) insert += "\n";
+      selFrom = selTo = start + insert.length;
+    } else {
+      insert = snip.text || snip.label || "";
+      selFrom = selTo = start + insert.length;
+    }
+
+    const next = text.slice(0, start) + insert + text.slice(end);
+    setSaveState("dirty");
+    setSections((prev) =>
+      prev.map((s) => (s.id === sectionId ? { ...s, content_md: next } : s))
+    );
+    setRightTab("paper");
+    setMessage(`Inserted ${snip.label} — edit the highlighted text.`);
+    requestAnimationFrame(() => {
+      const editor = paperEditorRef.current;
+      if (!editor) return;
+      editor.focus();
+      editor.setSelectionRange(selFrom, selTo);
+    });
   }
 
   async function checkAllSpelling() {
@@ -1454,14 +1792,82 @@ export default function ResearchWorkspacePage() {
   async function uploadArtifact(e) {
     const file = e.target.files?.[0];
     if (!file || !activeId) return;
-    const form = new FormData();
-    form.append("file", file);
-    await api(`/api/research/projects/${activeId}/artifacts`, {
-      method: "POST",
-      body: form,
-    });
-    await loadProjectDetails();
-    setMessage(`Uploaded ${file.name}`);
+    beginBusy("Uploading artifact");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      await api(`/api/research/projects/${activeId}/artifacts`, {
+        method: "POST",
+        body: form,
+      });
+      await loadProjectDetails();
+      setMessage(`Uploaded ${file.name}`);
+    } catch (err) {
+      setError(err.message || "Upload failed.");
+    } finally {
+      endBusy();
+      e.target.value = "";
+    }
+  }
+
+  async function saveArtifactUrl(e) {
+    e?.preventDefault?.();
+    if (!activeId) return;
+    const url = artifactUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      setError("Enter a valid http(s) URL to save.");
+      return;
+    }
+    beginBusy("Saving URL artifact");
+    setError("");
+    try {
+      const row = await api(`/api/research/projects/${activeId}/artifacts/url`, {
+        method: "POST",
+        body: JSON.stringify({
+          url,
+          title: artifactUrlTitle.trim(),
+          notes: artifactUrlNote.trim(),
+        }),
+      });
+      setArtifactUrl("");
+      setArtifactUrlTitle("");
+      setArtifactUrlNote("");
+      await loadProjectDetails();
+      setMessage(`Saved URL: ${row.original_name || url}`);
+    } catch (err) {
+      setError(err.message || "Could not save URL.");
+    } finally {
+      endBusy();
+    }
+  }
+
+  async function downloadArtifactFile(artifact) {
+    if (!activeId || !artifact?.id) return;
+    beginBusy("Downloading artifact");
+    setError("");
+    try {
+      const token = getToken();
+      const res = await fetch(
+        `/api/research/projects/${activeId}/artifacts/${artifact.id}/download`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) {
+        throw new Error((await res.text()) || "Download failed");
+      }
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = artifact.original_name || "artifact.bin";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } catch (err) {
+      setError(err.message || "Download failed.");
+    } finally {
+      endBusy();
+    }
   }
 
   async function addMitre() {
@@ -1513,40 +1919,13 @@ export default function ResearchWorkspacePage() {
   }
 
   function scholarYearParams() {
-    const params = new URLSearchParams();
-    const yf = String(scholarYearFrom || "").trim();
-    const yt = String(scholarYearTo || "").trim();
-    if (/^\d{4}$/.test(yf)) params.set("year_from", yf);
-    if (/^\d{4}$/.test(yt)) params.set("year_to", yt);
-    return params;
+    return appendScholarDateParams(new URLSearchParams(), scholarYearFrom, scholarYearTo);
   }
 
   function applyScholarYearPreset(preset) {
-    const now = new Date().getFullYear();
-    if (preset === "clear") {
-      setScholarYearFrom("");
-      setScholarYearTo("");
-      return;
-    }
-    if (preset === "1y") {
-      setScholarYearFrom(String(now - 1));
-      setScholarYearTo(String(now));
-      return;
-    }
-    if (preset === "3y") {
-      setScholarYearFrom(String(now - 3));
-      setScholarYearTo(String(now));
-      return;
-    }
-    if (preset === "5y") {
-      setScholarYearFrom(String(now - 5));
-      setScholarYearTo(String(now));
-      return;
-    }
-    if (preset === "10y") {
-      setScholarYearFrom(String(now - 10));
-      setScholarYearTo(String(now));
-    }
+    const { from, to } = scholarDatePreset(preset);
+    setScholarYearFrom(from);
+    setScholarYearTo(to);
   }
 
   async function searchScholar(topicOverride) {
@@ -1566,21 +1945,20 @@ export default function ResearchWorkspacePage() {
       setScholarHits(res.results || []);
       setScholarQ(q);
       const yearBit =
-        res.year_from || res.year_to
-          ? ` · published ${res.year_from || "…"}–${res.year_to || "…"}`
+        res.date_from || res.date_to || res.year_from || res.year_to
+          ? ` · published ${res.date_from || res.year_from || "…"}–${res.date_to || res.year_to || "…"}`
           : "";
-      setScholarNote(
+      let note =
         res.message ||
-          `Found ${res.total || 0} scholarly hit(s)` +
-            (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
-            yearBit +
-            ". Ranked by topic fit + citations + recency."
-      );
+        `Found ${res.total || 0} scholarly hit(s)` +
+          (res.sources_tried?.length ? ` via ${res.sources_tried.join(", ")}` : "") +
+          yearBit +
+          ". Ranked by topic fit + citations + recency.";
       if (res.source_errors?.length) {
-        setMessage((res.note || "") + " " + res.source_errors.join(" · "));
-      } else if (res.note) {
-        setMessage(res.note);
+        note = `${note} ${res.source_errors.join(" · ")}`;
       }
+      setScholarNote(note);
+      if (res.note) setMessage(res.note);
     } catch (e) {
       setError(e.message || "Scholar search failed.");
     } finally {
@@ -2041,17 +2419,35 @@ export default function ResearchWorkspacePage() {
                       : ""}
                   </span>
                 </div>
-                <button
-                  className="btn ghost"
-                  type="button"
-                  onClick={() => setAiCheckPanel(null)}
-                >
-                  Dismiss
-                </button>
+                <div className="row" style={{ gap: "0.35rem" }}>
+                  {!isReviewer &&
+                    ((aiCheckPanel.signals?.dash_hits || 0) > 0 ||
+                      (aiCheckPanel.signals?.semicolon_hits || 0) > 0 ||
+                      (aiCheckPanel.why || []).some((w) => /dash|semicolon/i.test(String(w)))) && (
+                      <button
+                        className="btn primary"
+                        type="button"
+                        disabled={busy}
+                        onClick={runStyleFixFromAiCheck}
+                        title="Preview smart fixes for en/em dashes, --, and semicolons (Accept required)"
+                      >
+                        Fix style tells
+                      </button>
+                    )}
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => setAiCheckPanel(null)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
                 Local heuristic (not a forensic detector). Score starts at a baseline, then style
                 signals push it up or down. Last run is restored after refresh from AI check history.
+                Fix converts date ranges like 1–30 to 1-30, other banned dashes to commas, and
+                semicolons to periods — preview before Accept. Does not add contractions.
               </p>
               {(aiCheckPanel.why || []).length > 0 && (
                 <div>
@@ -2229,22 +2625,67 @@ export default function ResearchWorkspacePage() {
                       Add section
                     </button>
                   </div>
-                  <label>
-                    Research prompt for this section
+                  <div className="stack" style={{ gap: "0.35rem" }}>
+                    <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                      <strong style={{ fontSize: "0.92rem" }}>Research prompt for this section</strong>
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        onClick={clearResearchPrompt}
+                        disabled={busy || !String(prompt || "").trim()}
+                        title="Clear the saved research prompt on this section (paper unchanged)"
+                      >
+                        Clear prompt
+                      </button>
+                    </div>
                     <textarea
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
-                      placeholder="What should the multi-agent panel explore here?"
+                      onBlur={() => {
+                        if (!project || !activeSection || isReviewer) return;
+                        const saved = activeSection.prompt || "";
+                        if (saved === (prompt || "")) return;
+                        api(`/api/projects/${project.id}/sections/${activeSection.id}`, {
+                          method: "PATCH",
+                          body: JSON.stringify({
+                            content_md: activeSection.content_md || "",
+                            prompt: prompt || "",
+                          }),
+                        })
+                          .then((updated) => {
+                            setSections((prev) =>
+                              prev.map((s) => (s.id === updated.id ? updated : s))
+                            );
+                          })
+                          .catch(() => {});
+                      }}
+                      placeholder="What should the panel explore? Paste article URLs here — they are fetched and summarized into context."
                       lang="en"
                       spellCheck
                     />
-                  </label>
+                  </div>
+                  <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
+                    Tip: paste http(s) links (up to 3) for a research-paper source note (article
+                    synopsis + implications for exposure management writing). Add{" "}
+                    <code>full framing</code> / <code>with ATT&amp;CK</code> only when you want deeper
+                    threat/program sections. Cloudflare pages may need a free Jina key, or paste the
+                    article text. Prompt is saved on this section — use Clear prompt if a test URL sticks.
+                  </p>
                   <div className="row">
                     <button className="btn primary" onClick={runAssistant} disabled={busy}>
                       {busyLabel?.includes("Research Assistant") ? "Researching…" : "Research Assistant"}
                     </button>
                     <button className="btn" onClick={applyAssistant} disabled={!assistantOut || busy}>
                       Apply to paper
+                    </button>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      onClick={clearAssistantOutputs}
+                      disabled={busy || (!assistantOut && !critique && !redTeam)}
+                      title="Clear Assistant draft, Critic, and Red team (does not change the paper or prompt)"
+                    >
+                      Clear
                     </button>
                     <label style={{ minWidth: 220 }}>
                       Live model
@@ -2297,34 +2738,157 @@ export default function ResearchWorkspacePage() {
                 </>
               )}
 
-              {assistantOut && !isReviewer && (
+              {(assistantOut || critique || redTeam) && !isReviewer && (
                 <div className="stack" ref={assistantRef}>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                    <strong>Assistant draft</strong>
+                  {assistantOut && (
+                    <>
+                      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                        <strong>Assistant draft</strong>
+                        <div className="row">
+                          <button
+                            className="btn ghost"
+                            type="button"
+                            onClick={clearAssistantOutputs}
+                            disabled={busy}
+                            title="Clear Assistant draft, Critic, and Red team"
+                          >
+                            Clear
+                          </button>
+                          <button className="btn" type="button" onClick={applyAssistant} disabled={busy}>
+                            Apply to paper
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        value={assistantOut}
+                        onChange={(e) => setAssistantOut(e.target.value)}
+                        lang="en"
+                        spellCheck
+                      />
+                      <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+                        Not in the paper until you Apply. Clear removes draft + Critic + Red team only.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {styleFixDraft && !isReviewer && (
+                <div
+                  className="panel stack"
+                  ref={styleFixRef}
+                  style={{ borderColor: "rgba(79, 140, 255, 0.4)" }}
+                >
+                  <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                    <h3 style={{ margin: 0 }}>
+                      Style fix preview ·{" "}
+                      {styleFixDraft.scope === "paper"
+                        ? `full paper (${styleFixDraft.items.length} section${
+                            styleFixDraft.items.length === 1 ? "" : "s"
+                          })`
+                        : styleFixDraft.items[0]?.title || "section"}
+                    </h3>
                     <div className="row">
-                      <button
-                        className="btn ghost"
-                        type="button"
-                        onClick={dismissAssistantDraft}
-                        disabled={busy}
-                        title="Clear this draft without writing to the paper"
-                      >
-                        Dismiss draft
+                      <button className="btn" type="button" onClick={rejectStyleFix} disabled={busy}>
+                        Reject
                       </button>
-                      <button className="btn" type="button" onClick={applyAssistant} disabled={busy}>
-                        Apply to paper
+                      <button
+                        className="btn primary"
+                        type="button"
+                        onClick={acceptStyleFix}
+                        disabled={busy}
+                      >
+                        Accept fix
                       </button>
                     </div>
                   </div>
-                  <textarea
-                    value={assistantOut}
-                    onChange={(e) => setAssistantOut(e.target.value)}
-                    lang="en"
-                    spellCheck
-                  />
-                  <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
-                    Not in the paper until you Apply. Dismiss only clears this box.
+                  <p className="muted" style={{ margin: 0 }}>
+                    Smart fixes only (range dashes → hyphen, other banned dashes → comma, semicolons →
+                    period). Not saved until Accept. Red = removed, green = added.
                   </p>
+                  {(styleFixDraft.ops || []).length > 0 && (
+                    <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem" }}>
+                      {styleFixDraft.ops.slice(0, 8).map((op, idx) => (
+                        <li key={`op-${idx}`}>{op}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="grid-3">
+                    <div className="metric">
+                      <span className="muted">Before AI %</span>
+                      <strong
+                        className={
+                          (styleFixDraft.before?.ai_pct || 0) >= 10 ? "badge bad" : "badge good"
+                        }
+                      >
+                        {styleFixDraft.before?.ai_pct ?? "—"}%
+                      </strong>
+                    </div>
+                    <div className="metric">
+                      <span className="muted">After AI %</span>
+                      <strong
+                        className={
+                          (styleFixDraft.after?.ai_pct || 0) >= 10 ? "badge bad" : "badge good"
+                        }
+                      >
+                        {styleFixDraft.after?.ai_pct ?? "—"}%
+                      </strong>
+                    </div>
+                    <div className="metric">
+                      <span className="muted">Delta</span>
+                      <strong style={{ fontSize: "1rem" }}>
+                        {(() => {
+                          const b = Number(styleFixDraft.before?.ai_pct);
+                          const a = Number(styleFixDraft.after?.ai_pct);
+                          if (Number.isNaN(b) || Number.isNaN(a)) return "—";
+                          const d = Number((b - a).toFixed(1));
+                          if (d > 0) return `↓ ${d} pts`;
+                          if (d < 0) return `↑ ${Math.abs(d)} pts`;
+                          return "No change";
+                        })()}
+                      </strong>
+                    </div>
+                  </div>
+                  {styleFixDraft.items.length > 1 && (
+                    <label>
+                      Preview section
+                      <select
+                        value={String(styleFixDraft.previewIndex || 0)}
+                        onChange={(e) =>
+                          setStyleFixDraft((d) =>
+                            d ? { ...d, previewIndex: Number(e.target.value) || 0 } : d
+                          )
+                        }
+                      >
+                        {styleFixDraft.items.map((item, idx) => (
+                          <option key={item.sectionId} value={idx}>
+                            {item.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <TextDiffPanes
+                    original={
+                      styleFixDraft.items[styleFixDraft.previewIndex || 0]?.original || ""
+                    }
+                    proposed={
+                      styleFixDraft.items[styleFixDraft.previewIndex || 0]?.proposed || ""
+                    }
+                    originalLabel="Original"
+                    proposedLabel="Proposed style fix"
+                    editableProposed
+                    onProposedChange={(next) =>
+                      setStyleFixDraft((d) => {
+                        if (!d) return d;
+                        const idx = d.previewIndex || 0;
+                        const items = d.items.map((it, i) =>
+                          i === idx ? { ...it, proposed: next } : it
+                        );
+                        return { ...d, items };
+                      })
+                    }
+                  />
                 </div>
               )}
 
@@ -2408,7 +2972,18 @@ export default function ResearchWorkspacePage() {
 
               {critique && (
                 <div className="alert warn">
-                  <strong>Critic</strong>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                    <strong>Critic</strong>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      onClick={clearAssistantOutputs}
+                      disabled={busy}
+                      title="Clear Assistant draft, Critic, and Red team"
+                    >
+                      Clear
+                    </button>
+                  </div>
                   <pre style={{ whiteSpace: "pre-wrap", margin: "0.4rem 0 0", fontFamily: "var(--mono)", fontSize: "0.82rem" }}>
                     {critique}
                   </pre>
@@ -2416,7 +2991,18 @@ export default function ResearchWorkspacePage() {
               )}
               {redTeam && (
                 <div className="alert warn">
-                  <strong>Red team</strong>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                    <strong>Red team</strong>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      onClick={clearAssistantOutputs}
+                      disabled={busy}
+                      title="Clear Assistant draft, Critic, and Red team"
+                    >
+                      Clear
+                    </button>
+                  </div>
                   <pre style={{ whiteSpace: "pre-wrap", margin: "0.4rem 0 0", fontFamily: "var(--mono)", fontSize: "0.82rem" }}>
                     {redTeam}
                   </pre>
@@ -2741,14 +3327,16 @@ export default function ResearchWorkspacePage() {
                 <div className="panel stack" style={{ padding: "0.75rem" }}>
                   <strong>Scholar search</strong>
                   <p className="muted" style={{ margin: 0 }}>
-                    Crossref + Semantic Scholar + OpenAlex. Optional year filters. Not Google Scholar.
+                    Crossref + Semantic Scholar + OpenAlex + Google Scholar (SerpAPI key in Settings).
+                    Month-level date range (Crossref/OpenAlex use exact months; S2/Google Scholar use years).
+                    Tip: add domain words so results stay on-topic.
                   </p>
                   <div className="row">
                     <input
                       style={{ flex: 1 }}
                       value={scholarQ}
                       onChange={(e) => setScholarQ(e.target.value)}
-                      placeholder="e.g. exposure management prioritization exploitability"
+                      placeholder="e.g. cybersecurity exposure management prioritization (add domain words)"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
@@ -2770,48 +3358,49 @@ export default function ResearchWorkspacePage() {
                     </button>
                   </div>
                   <div className="row" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
-                    <label style={{ minWidth: 100 }}>
+                    <label style={{ minWidth: 130 }}>
                       Published from
                       <input
-                        type="number"
-                        min={1990}
-                        max={2100}
-                        step={1}
-                        placeholder="YYYY"
+                        type="month"
                         value={scholarYearFrom}
                         onChange={(e) => setScholarYearFrom(e.target.value)}
                         disabled={busy}
-                        title="Optional earliest publication year"
+                        title="Earliest publication month (YYYY-MM)"
                       />
                     </label>
-                    <label style={{ minWidth: 100 }}>
+                    <label style={{ minWidth: 130 }}>
                       Published to
                       <input
-                        type="number"
-                        min={1990}
-                        max={2100}
-                        step={1}
-                        placeholder="YYYY"
+                        type="month"
                         value={scholarYearTo}
                         onChange={(e) => setScholarYearTo(e.target.value)}
                         disabled={busy}
-                        title="Optional latest publication year"
+                        title="Latest publication month (YYYY-MM)"
                       />
                     </label>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("6m")}>
+                      6 mo
+                    </button>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("ytd")}>
+                      YTD
+                    </button>
                     <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("1y")}>
-                      Last 1y
+                      1y
+                    </button>
+                    <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("2y")}>
+                      2y
                     </button>
                     <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("3y")}>
-                      Last 3y
+                      3y
                     </button>
                     <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("5y")}>
-                      Last 5y
+                      5y
                     </button>
                     <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("10y")}>
-                      Last 10y
+                      10y
                     </button>
                     <button className="btn ghost" type="button" disabled={busy} onClick={() => applyScholarYearPreset("clear")}>
-                      Any year
+                      Any date
                     </button>
                   </div>
                   {scholarNote && <p className="muted" style={{ margin: 0 }}>{scholarNote}</p>}
@@ -2987,24 +3576,108 @@ export default function ResearchWorkspacePage() {
               {!isReviewer && (
                 <CollapsibleTile
                   title="Artifacts"
-                  summary={
-                    artifacts.length
-                      ? `${artifacts.length} file(s)`
-                      : "Collapsed · uploads"
-                  }
+                  summary={(() => {
+                    const files = artifacts.filter((a) => (a.kind || "file") !== "url").length;
+                    const links = artifacts.filter((a) => a.kind === "url").length;
+                    if (!artifacts.length) return "Collapsed · files + saved URLs";
+                    const bits = [];
+                    if (files) bits.push(`${files} file${files === 1 ? "" : "s"}`);
+                    if (links) bits.push(`${links} link${links === 1 ? "" : "s"}`);
+                    return bits.join(" · ") || `${artifacts.length} item(s)`;
+                  })()}
                   defaultOpen={false}
                 >
-                  <input type="file" onChange={uploadArtifact} />
-                  <ul className="muted">
-                    {artifacts.map((a) => (
-                      <li key={a.id}>
-                        {a.original_name} ({a.size_bytes} bytes)
-                      </li>
-                    ))}
-                  </ul>
-                  {!artifacts.length && (
-                    <p className="muted" style={{ margin: 0 }}>No artifacts uploaded yet.</p>
-                  )}
+                  <div className="stack">
+                    <div className="stack" style={{ gap: "0.35rem" }}>
+                      <strong style={{ fontSize: "0.9rem" }}>Upload file</strong>
+                      <input type="file" onChange={uploadArtifact} disabled={busy} />
+                    </div>
+                    <form className="stack" onSubmit={saveArtifactUrl} style={{ gap: "0.35rem" }}>
+                      <strong style={{ fontSize: "0.9rem" }}>Save URL to reference later</strong>
+                      <input
+                        type="url"
+                        placeholder="https://…"
+                        value={artifactUrl}
+                        onChange={(e) => setArtifactUrl(e.target.value)}
+                        disabled={busy}
+                      />
+                      <input
+                        placeholder="Title (optional)"
+                        value={artifactUrlTitle}
+                        onChange={(e) => setArtifactUrlTitle(e.target.value)}
+                        disabled={busy}
+                      />
+                      <input
+                        placeholder="Note (optional)"
+                        value={artifactUrlNote}
+                        onChange={(e) => setArtifactUrlNote(e.target.value)}
+                        disabled={busy}
+                      />
+                      <button className="btn" type="submit" disabled={busy || !artifactUrl.trim()}>
+                        Save URL
+                      </button>
+                    </form>
+                    {!artifacts.length && (
+                      <p className="muted" style={{ margin: 0 }}>
+                        No artifacts yet. Upload a file or save a URL for later reference.
+                      </p>
+                    )}
+                    {!!artifacts.length && (
+                      <div className="stack" style={{ gap: "0.45rem" }}>
+                        {artifacts.map((a) => {
+                          const isUrl = a.kind === "url" || !!a.source_url;
+                          return (
+                            <div
+                              key={a.id}
+                              className="row"
+                              style={{
+                                justifyContent: "space-between",
+                                alignItems: "flex-start",
+                                gap: "0.5rem",
+                              }}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div>
+                                  <span className="badge">{isUrl ? "url" : "file"}</span>{" "}
+                                  <strong style={{ fontSize: "0.9rem" }}>{a.original_name}</strong>
+                                </div>
+                                <div className="muted" style={{ fontSize: "0.8rem" }}>
+                                  {isUrl
+                                    ? a.source_url
+                                    : `${a.size_bytes || 0} bytes`}
+                                  {a.created_at ? ` · ${formatLocalDateTime(a.created_at)}` : ""}
+                                </div>
+                                {isUrl && a.notes ? (
+                                  <div className="muted" style={{ fontSize: "0.8rem" }}>
+                                    {a.notes}
+                                  </div>
+                                ) : null}
+                              </div>
+                              {isUrl && a.source_url ? (
+                                <a
+                                  className="btn ghost"
+                                  href={a.source_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Open
+                                </a>
+                              ) : (
+                                <button
+                                  className="btn ghost"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => downloadArtifactFile(a)}
+                                >
+                                  Download
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </CollapsibleTile>
               )}
             </div>
@@ -3029,6 +3702,14 @@ export default function ResearchWorkspacePage() {
                 </div>
                 <div className="row">
                   <span className="badge">{activeSection?.title || "markdown"}</span>
+                  {rightTab === "paper" && (
+                    <HelpIcon label="Markdown formatting help" mark="MD" wide>
+                      <MarkdownFormatHelp
+                        canInsert={!isReviewer && !!activeSection}
+                        onInsert={insertMarkdownSnippet}
+                      />
+                    </HelpIcon>
+                  )}
                   <span
                     className={
                       saveState === "saved"
@@ -3287,7 +3968,7 @@ export default function ResearchWorkspacePage() {
                     </div>
                   )}
                   <div className="row" style={{ justifyContent: "flex-end", alignItems: "center", gap: "0.35rem" }}>
-                    <HelpIcon label="Paper editor help">
+                    <HelpIcon label="Paper editor help" wide>
                       <div>Autosaves ~3s after you pause typing; also on blur and Save now.</div>
                       <div style={{ marginTop: "0.35rem" }}>
                         <strong>Download Word</strong> converts this section markdown → .docx.{" "}
@@ -3295,6 +3976,12 @@ export default function ResearchWorkspacePage() {
                       </div>
                       <div style={{ marginTop: "0.35rem" }}>
                         Spell tools sit under the editor: red underlines + find/replace.
+                      </div>
+                      <div style={{ marginTop: "0.55rem" }}>
+                        <MarkdownFormatHelp
+                          canInsert={!isReviewer && !!activeSection}
+                          onInsert={insertMarkdownSnippet}
+                        />
                       </div>
                     </HelpIcon>
                   </div>
@@ -3427,7 +4114,7 @@ export default function ResearchWorkspacePage() {
                             <span className="badge">{r.kind}</span>
                             <span className="muted" style={{ fontSize: "0.78rem" }}>
                               {r.section_count} sections · {r.char_count} chars
-                              {r.created_at ? ` · ${new Date(r.created_at).toLocaleString()}` : ""}
+                              {r.created_at ? ` · ${formatLocalDateTime(r.created_at)}` : ""}
                             </span>
                           </div>
                           {r.note && (
@@ -3483,51 +4170,69 @@ export default function ResearchWorkspacePage() {
                         </button>
                       </div>
                       <p className="muted" style={{ margin: 0, fontSize: "0.82rem" }}>
-                        Light per-section history (before save / restore). Does not change version numbers.
+                        Light per-section history (before save / restore). Does not change version
+                        numbers. Latest five stay in view; scroll for older snippets.
                       </p>
                       {!sectionVersions.length && (
                         <p className="muted" style={{ margin: 0 }}>
                           No versions yet. Edit and save to create snippets.
                         </p>
                       )}
-                      {sectionVersions.map((v) => (
+                      {!!sectionVersions.length && (
                         <div
-                          key={v.id}
-                          className="row"
-                          style={{ justifyContent: "space-between", alignItems: "flex-start" }}
+                          className="stack"
+                          style={{
+                            maxHeight: "17.5rem",
+                            overflowY: "auto",
+                            paddingRight: "0.15rem",
+                            borderTop: "1px solid rgba(255,255,255,0.06)",
+                          }}
+                          title="Scroll for older autosave snippets"
                         >
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div>
-                              <span className="badge">{v.label}</span>{" "}
-                              <span className="muted" style={{ fontSize: "0.8rem" }}>
-                                {v.char_count} chars
-                                {v.created_at
-                                  ? ` · ${new Date(v.created_at).toLocaleString()}`
-                                  : ""}
-                              </span>
-                            </div>
+                          {sectionVersions.map((v) => (
                             <div
-                              className="muted"
+                              key={v.id}
+                              className="row"
                               style={{
-                                fontSize: "0.82rem",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
+                                justifyContent: "space-between",
+                                alignItems: "flex-start",
+                                flexShrink: 0,
                               }}
                             >
-                              {v.snippet}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div>
+                                  <span className="badge">{v.label}</span>{" "}
+                                  <span className="muted" style={{ fontSize: "0.8rem" }}>
+                                    {v.char_count} chars
+                                    {v.created_at
+                                      ? ` · ${formatLocalDateTime(v.created_at)}`
+                                      : ""}
+                                  </span>
+                                </div>
+                                <div
+                                  className="muted"
+                                  style={{
+                                    fontSize: "0.82rem",
+                                    whiteSpace: "nowrap",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                  }}
+                                >
+                                  {v.snippet}
+                                </div>
+                              </div>
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => restoreSectionVersion(v.id)}
+                              >
+                                Restore
+                              </button>
                             </div>
-                          </div>
-                          <button
-                            className="btn"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => restoreSectionVersion(v.id)}
-                          >
-                            Restore
-                          </button>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
                   )}
                 </>

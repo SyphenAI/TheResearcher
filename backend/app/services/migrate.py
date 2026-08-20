@@ -64,3 +64,28 @@ def ensure_schema(engine: Engine) -> None:
         with engine.begin() as conn:
             for stmt in token_alters:
                 conn.execute(text(stmt))
+            # Retired xAI model IDs → current flagship (blank preferred stays blank / auto default).
+            token_cols_now = {c["name"] for c in inspector.get_columns("api_tokens")}
+            if "model" in token_cols_now or any("model" in s for s in token_alters):
+                conn.execute(
+                    text(
+                        "UPDATE api_tokens SET model = 'grok-4.6' "
+                        "WHERE lower(provider) = 'xai' AND lower(coalesce(model, '')) IN ("
+                        "'grok-2-latest','grok-2','grok-2-1212',"
+                        "'grok-3','grok-3-mini','grok-3-fast','grok-3-mini-fast'"
+                        ")"
+                    )
+                )
+
+    if "artifacts" in inspector.get_table_names():
+        art_cols = {c["name"] for c in inspector.get_columns("artifacts")}
+        art_alters = []
+        if "kind" not in art_cols:
+            art_alters.append("ALTER TABLE artifacts ADD COLUMN kind VARCHAR(16) DEFAULT 'file'")
+        if "source_url" not in art_cols:
+            art_alters.append(
+                "ALTER TABLE artifacts ADD COLUMN source_url VARCHAR(1024) DEFAULT ''"
+            )
+        with engine.begin() as conn:
+            for stmt in art_alters:
+                conn.execute(text(stmt))

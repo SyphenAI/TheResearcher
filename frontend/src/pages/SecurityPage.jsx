@@ -439,7 +439,9 @@ export default function SecurityPage() {
           </label>
           <p className="footer-note">
             Tip: Haiku / mini models are cheaper for drafts and tests. Use Sonnet/Opus only when quality
-            matters. Blank preferred model falls back to provider defaults.
+            matters. Blank preferred model = Auto (app default for that provider), not a live “latest
+            from vendor” lookup. For xAI use a current ID like <code>grok-4.6</code> (older{" "}
+            <code>grok-2-latest</code> / <code>grok-3</code> names are retired).
           </p>
           <label className="row" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
             <input
